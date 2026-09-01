@@ -245,8 +245,8 @@ const STORAGE_KEY = 'sapphire-returns-dashboard-v1';
    3. Paste the same SHARED_SECRET value you set at the top of
       Code.gs below — it must match exactly on both sides.
    ========================================================= */
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxdBbcbs5u8905ydzMEhu-SnvkgnT4naDAuIE1u9DLDngBmx9I1dbeis6_L1lrNrmKZ/exec'; // e.g. https://script.google.com/macros/s/AKfycb.../exec
-const SHARED_SECRET = 'SapphireRetailSecure2026#X7'; // must match Code.gs
+const APPS_SCRIPT_URL = 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE'; // e.g. https://script.google.com/macros/s/AKfycb.../exec
+const SHARED_SECRET = 'CHANGE-THIS-TO-A-PRIVATE-STRING'; // must match Code.gs
 
 function storeByCode(c){ return STORES.find(s=>s.code===c); }
 
@@ -636,8 +636,16 @@ function renderClusterView(){
   const summaryRows = stores.map(s=>{
     const ts = summaryScope.filter(t=>t.storeCode===s.code);
     const c = st => ts.filter(t=>t.status===st).length;
+    // Per-category performance — distinct transaction count, summed Return
+    // Qty, and summed compliance Value — same category stats used in the
+    // Cluster/Regional/HQ KPI rows (clusterKpiRow), just scoped to one store.
+    const cat = code => { const g = ts.filter(t=>t.category===code); return {count:g.length, qty:g.reduce((s,t)=>s+t.qty,0), amt:g.reduce((s,t)=>s+t.amount,0)}; };
+    const refund=cat('refund'), over30=cat('over30'), fullprice=cat('fullprice');
     return `<tr>
       <td>${esc(s.name)}</td>
+      <td class="num-cell">${refund.count}</td><td class="num-cell">${refund.qty}</td><td class="num-cell">${money(refund.amt)}</td>
+      <td class="num-cell">${over30.count}</td><td class="num-cell">${over30.qty}</td><td class="num-cell">${money(over30.amt)}</td>
+      <td class="num-cell">${fullprice.count}</td><td class="num-cell">${fullprice.qty}</td><td class="num-cell">${money(fullprice.amt)}</td>
       <td class="num-cell">${c('Signed Off')}</td>
       <td class="num-cell">${c('Awaiting Review')}</td>
       <td class="num-cell">${c('Re-Review')}</td>
@@ -688,7 +696,7 @@ function renderClusterView(){
     <div class="card">
       <div class="card-head"><h2>Store Summary</h2></div>
       <div class="card-body" style="overflow-x:auto;">
-        <table><thead><tr><th>Store</th><th>Signed Off</th><th>Awaiting</th><th>Re-Review</th><th>Not Submitted</th></tr></thead>
+        <table><thead><tr><th>Store</th><th>Refund Txns</th><th>Refund Qty</th><th>Refund Value</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Qty</th><th>Return&gt;30 Value</th><th>Full Price Txns</th><th>Full Price Qty</th><th>Full Price Value</th><th>Signed Off</th><th>Awaiting</th><th>Re-Review</th><th>Not Submitted</th></tr></thead>
         <tbody>${summaryRows}</tbody></table>
       </div>
     </div>
