@@ -245,8 +245,8 @@ const STORAGE_KEY = 'sapphire-returns-dashboard-v1';
    3. Paste the same SHARED_SECRET value you set at the top of
       Code.gs below — it must match exactly on both sides.
    ========================================================= */
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxdBbcbs5u8905ydzMEhu-SnvkgnT4naDAuIE1u9DLDngBmx9I1dbeis6_L1lrNrmKZ/exec'; // e.g. https://script.google.com/macros/s/AKfycb.../exec
-const SHARED_SECRET = 'SapphireRetailSecure2026#X7'; // must match Code.gs
+const APPS_SCRIPT_URL = 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE'; // e.g. https://script.google.com/macros/s/AKfycb.../exec
+const SHARED_SECRET = 'CHANGE-THIS-TO-A-PRIVATE-STRING'; // must match Code.gs
 
 function storeByCode(c){ return STORES.find(s=>s.code===c); }
 
@@ -319,28 +319,51 @@ let regionalAuth = { unlocked:false, region: REGIONS[0] };
    STORAGE — Google Apps Script Web App is now the source of
    truth (Google Sheet "DataStore" tab). See Code.gs.
    ========================================================= */
-async function loadData(){
+async function fetchDataFromBackend(){
   try{
-    const res = await fetch(APPS_SCRIPT_URL + '?action=load');
+    // cache:'no-store' + a timestamp query param stop the browser from
+    // silently replaying a cached response on refresh instead of actually
+    // asking Apps Script again.
+    const res = await fetch(APPS_SCRIPT_URL + '?action=load&_=' + Date.now(), { cache:'no-store' });
     const json = await res.json();
     if(json && json.ok) return json.data;
     showToast('Backend returned an error loading data.', 5000);
   }catch(e){
     showToast('Could not reach the backend — check APPS_SCRIPT_URL. ('+(e.message||e)+')', 6000);
   }
+  return null;
+}
+async function loadData(){
+  const data = await fetchDataFromBackend();
+  if(data) return data;
+  // Empty-seed fallback is only appropriate on the very first load, when
+  // there's no existing dashboard state to protect. See the auto-refresh
+  // handler below for why a failed refresh must NOT reach this path.
   return { transactions: makeSeedTransactions(), auditLog: [
     {timestamp:new Date().toISOString(), user:'System', role:'System', action:'Backend unreachable — showing empty local state', transaction:'—', prevStatus:'—', newStatus:'—', remarks:''}
   ], uploadLog: [], lastUploadTs: null };
 }
 async function saveData(data){
   try{
-    await fetch(APPS_SCRIPT_URL, {
+    const res = await fetch(APPS_SCRIPT_URL, {
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=utf-8'}, // plain text avoids a CORS preflight Apps Script can't answer
       body: JSON.stringify({ action:'save', secret: SHARED_SECRET, data })
     });
+    const json = await res.json();
+    if(!json || !json.ok){
+      // The request reached Apps Script but was rejected (e.g. SHARED_SECRET
+      // mismatch) — this used to fail silently, leaving the change only in
+      // this browser's memory until the next refresh wiped it out. Now it's
+      // surfaced loudly instead, because a compliance tool silently losing
+      // submitted data is worse than an ugly error message.
+      showToast('SAVE REJECTED BY BACKEND — this change was NOT written to the Sheet and will be lost on refresh. ('+(json&&json.error?json.error:'unknown error')+')', 8000);
+      return false;
+    }
+    return true;
   }catch(e){
-    showToast('Save failed — changes may not persist. ('+(e.message||e)+')');
+    showToast('Save failed — changes may not persist. ('+(e.message||e)+')', 8000);
+    return false;
   }
 }
 // Server-side credential check. role: 'store' | 'cluster' | 'regional' | 'admin'.
@@ -599,9 +622,19 @@ function renderClusterView(){
   const stores = STORES.filter(s=>s.clusterManager===mgr);
   const codes = stores.map(s=>s.code);
   const all = txnsFor(t=>codes.includes(t.storeCode));
+  const f = clusterFilters;
+  // Date range applies to the Store Summary counts (historical reporting)
+  // only — the Review Queue below always shows every pending item
+  // regardless of date, so nothing awaiting action can get hidden by a
+  // filter someone forgot was set.
+  const summaryScope = all.filter(t=>{
+    if(f.dateFrom && t.date<f.dateFrom) return false;
+    if(f.dateTo && t.date>f.dateTo) return false;
+    return true;
+  });
 
   const summaryRows = stores.map(s=>{
-    const ts = all.filter(t=>t.storeCode===s.code);
+    const ts = summaryScope.filter(t=>t.storeCode===s.code);
     const c = st => ts.filter(t=>t.status===st).length;
     return `<tr>
       <td>${esc(s.name)}</td>
@@ -646,6 +679,12 @@ function renderClusterView(){
     <div class="panel-head">
       <div><h1>Cluster Review — ${esc(mgr)}</h1><p>${stores.map(s=>s.name).join(', ')}</p></div>
     </div>
+    <div class="filters-grid" style="max-width:420px;">
+      <div><span class="field-label">From date</span><input type="date" id="cFDateFrom" value="${f.dateFrom||''}"></div>
+      <div><span class="field-label">To date</span><input type="date" id="cFDateTo" value="${f.dateTo||''}"></div>
+      <div style="align-self:end;"><button class="btn sm secondary" id="cFClearBtn">Clear dates</button></div>
+    </div>
+    <div class="locked-note" style="margin:4px 0 12px;">${(f.dateFrom||f.dateTo) ? `Store Summary below is showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}.` : 'Store Summary below is the full cumulative total across every day currently loaded.'} The Review Queue always shows every pending item regardless of this filter.</div>
     <div class="card">
       <div class="card-head"><h2>Store Summary</h2></div>
       <div class="card-body" style="overflow-x:auto;">
@@ -694,11 +733,17 @@ function renderRegionalView(){
   // Unassigned (closed-store placeholder) is not a real cluster manager and
   // is excluded from the summary — it would otherwise show as a phantom row.
   const mgrs = [...new Set(stores.map(s=>s.clusterManager))].filter(m=>m!=='Unassigned');
+  const f = regionalFilters;
 
   const rows = mgrs.map(m=>{
     const mgrStores = stores.filter(s=>s.clusterManager===m);
     const codes = mgrStores.map(s=>s.code);
-    const ts = txnsFor(t=>codes.includes(t.storeCode));
+    const ts = txnsFor(t=>{
+      if(!codes.includes(t.storeCode)) return false;
+      if(f.dateFrom && t.date<f.dateFrom) return false;
+      if(f.dateTo && t.date>f.dateTo) return false;
+      return true;
+    });
     return clusterKpiRow(m, mgrStores, ts);
   }).join('');
 
@@ -708,6 +753,12 @@ function renderRegionalView(){
       <div><h1>Regional Manager Insights</h1><p>${stores.length} stores · ${mgrs.length} cluster manager(s) in ${esc(region)}</p></div>
       <div><span class="field-label">Region</span><select id="regionSelect">${REGIONS.map(r=>`<option ${region===r?'selected':''}>${esc(r)}</option>`).join('')}</select></div>
     </div>
+    <div class="filters-grid" style="max-width:420px;">
+      <div><span class="field-label">From date</span><input type="date" id="rFDateFrom" value="${f.dateFrom||''}"></div>
+      <div><span class="field-label">To date</span><input type="date" id="rFDateTo" value="${f.dateTo||''}"></div>
+      <div style="align-self:end;"><button class="btn sm secondary" id="rFClearBtn">Clear dates</button></div>
+    </div>
+    <div class="locked-note" style="margin:4px 0 12px;">${(f.dateFrom||f.dateTo) ? `Showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}.` : 'Showing the full cumulative total across every day currently loaded.'}</div>
     <div class="card">
       <div class="card-head"><h2>Cluster Manager Summary — ${esc(region)}</h2></div>
       <div class="card-body" style="overflow-x:auto;">
@@ -725,7 +776,8 @@ function renderHQView(){
   const filtered = DATA.transactions.filter(t=>{
     const store = storeByCode(t.storeCode);
     if(f.region!=='all' && store.region!==f.region) return false;
-    if(f.date && t.date!==f.date) return false;
+    if(f.dateFrom && t.date<f.dateFrom) return false;
+    if(f.dateTo && t.date>f.dateTo) return false;
     return true;
   });
 
@@ -750,10 +802,13 @@ function renderHQView(){
   return `
     <div class="panel-head"><div><h1>HQ Dashboard</h1><p>Consolidated organization-wide compliance position</p></div></div>
 
-    <div class="filters-grid" style="max-width:420px;">
-      <div><span class="field-label">Date</span><input type="date" id="fDate" value="${f.date||''}"></div>
+    <div class="filters-grid" style="max-width:560px;">
+      <div><span class="field-label">From date</span><input type="date" id="fDateFrom" value="${f.dateFrom||''}"></div>
+      <div><span class="field-label">To date</span><input type="date" id="fDateTo" value="${f.dateTo||''}"></div>
       <div><span class="field-label">Region</span><select id="fRegion"><option value="all">All regions</option>${REGIONS.map(r=>`<option ${f.region===r?'selected':''}>${esc(r)}</option>`).join('')}</select></div>
+      <div style="align-self:end;"><button class="btn sm secondary" id="fClearBtn">Clear dates</button></div>
     </div>
+    ${(f.dateFrom||f.dateTo) ? `<div class="locked-note" style="margin:4px 0 12px;">Showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}. Leave both blank for the full cumulative total across every day loaded.</div>` : `<div class="locked-note" style="margin:4px 0 12px;">Showing the full cumulative total across every day currently loaded. Set a From/To date above to narrow it.</div>`}
 
     <div class="grid kpi-status">
       <div class="kpi"><div class="num">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
@@ -774,7 +829,9 @@ function renderHQView(){
     </div>
   `;
 }
-let hqFilters = {region:'all', date:''};
+let hqFilters = {region:'all', dateFrom:'', dateTo:''};
+let clusterFilters = {dateFrom:'', dateTo:''};
+let regionalFilters = {dateFrom:'', dateTo:''};
 function getHqFilters(){ return hqFilters; }
 
 /* =========================================================
@@ -936,14 +993,53 @@ function bindDynamicHandlers(){
   });
 
   // HQ filters
-  ['fDate','fRegion'].forEach(id=>{
+  ['fDateFrom','fDateTo','fRegion'].forEach(id=>{
     const el = document.getElementById(id);
     if(!el) return;
     el.onchange = ()=>{
-      hqFilters = { date: document.getElementById('fDate').value, region: document.getElementById('fRegion').value };
+      hqFilters = {
+        dateFrom: document.getElementById('fDateFrom').value,
+        dateTo: document.getElementById('fDateTo').value,
+        region: document.getElementById('fRegion').value
+      };
       render();
     };
   });
+  const fClearBtn = document.getElementById('fClearBtn');
+  if(fClearBtn) fClearBtn.onclick = ()=>{
+    hqFilters = { dateFrom:'', dateTo:'', region: hqFilters.region };
+    render();
+  };
+
+  // Cluster Review filters
+  ['cFDateFrom','cFDateTo'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.onchange = ()=>{
+      clusterFilters = {
+        dateFrom: document.getElementById('cFDateFrom').value,
+        dateTo: document.getElementById('cFDateTo').value
+      };
+      render();
+    };
+  });
+  const cFClearBtn = document.getElementById('cFClearBtn');
+  if(cFClearBtn) cFClearBtn.onclick = ()=>{ clusterFilters = {dateFrom:'', dateTo:''}; render(); };
+
+  // Regional Manager Insights filters
+  ['rFDateFrom','rFDateTo'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.onchange = ()=>{
+      regionalFilters = {
+        dateFrom: document.getElementById('rFDateFrom').value,
+        dateTo: document.getElementById('rFDateTo').value
+      };
+      render();
+    };
+  });
+  const rFClearBtn = document.getElementById('rFClearBtn');
+  if(rFClearBtn) rFClearBtn.onclick = ()=>{ regionalFilters = {dateFrom:'', dateTo:''}; render(); };
 
   // Regional Manager Insights — region selector
   const regionSel = document.getElementById('regionSelect');
@@ -1400,9 +1496,17 @@ setInterval(async ()=>{
   if(nextRefreshIn<=0){
     nextRefreshIn=REFRESH_INTERVAL_SECONDS;
     if(!editingActive){
-      DATA = await loadData();
-      lastLoadedTs = new Date().toISOString();
-      render();
+      // A failed refresh keeps showing the last successfully loaded DATA
+      // instead of wiping the screen — a transient network blip must never
+      // look like the data was deleted.
+      const fresh = await fetchDataFromBackend();
+      if(fresh){
+        DATA = fresh;
+        lastLoadedTs = new Date().toISOString();
+        render();
+      } else {
+        showToast('Auto-refresh failed — still showing the last successfully loaded data.', 6000);
+      }
       return;
     }
   }
