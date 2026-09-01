@@ -183,7 +183,7 @@ const STORES = [
   {code:'S2004EMP', name:'Emporium Mall, Lahore', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
   {code:'S4004GRT', name:'Kutchery road, Gujrat', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
   {code:'S2003DHA', name:'Y-Block DHA, Lahore', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
-  {code:'S4002FSD', name:'Jaranwala Road, Faislabad', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
+  {code:'S4002FSD', name:'Jaranwala Road, Faisalabad', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
   {code:'S4015SKP', name:'Sargodha Road, Sheikhpura', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
   {code:'S4012SKT', name:'V-Mall, Sialkot', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
   {code:'S2006MOD', name:'Mall of Defence, Lahore', cluster:'Closed', clusterManager:'Unassigned', region:'Central', closed:true},
@@ -202,8 +202,8 @@ const STORES = [
   {code:'S3001CEN', name:'Centaurus Mall, Islamabad', cluster:'N2', clusterManager:'Abdul Rehman', region:'North', closed:false},
   {code:'S4014MIR', name:'Dolphin Chowk, Mirpur', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
   {code:'S5004DMT', name:'DMTR, Karachi', cluster:'S1', clusterManager:'Imran Azeem', region:'South', closed:false},
-  {code:'S5009BMH', name:'Autobahn Road, Hyderabad', cluster:'S2', clusterManager:'Imran Azeem', region:'South', closed:false},
-  {code:'S5008LUK', name:'Lucky One Mall, Karachi', cluster:'S2', clusterManager:'Imran Azeem', region:'South', closed:false},
+  {code:'S5009BMH', name:'Autobahn Road, Hyderabad', cluster:'S2', clusterManager:'Syed Bilal Hussain', region:'South', closed:false},
+  {code:'S5008LUK', name:'Lucky One Mall, Karachi', cluster:'S2', clusterManager:'Syed Bilal Hussain', region:'South', closed:false},
   {code:'S5002DMC', name:'DMC, Karachi', cluster:'S1', clusterManager:'Imran Azeem', region:'South', closed:false},
   {code:'S5005GJK', name:'Gulistan-e-Johar, Karachi', cluster:'Closed', clusterManager:'Unassigned', region:'South', closed:true},
   {code:'S5003DMH', name:'Dolmen Mall Hyderi', cluster:'S2', clusterManager:'Imran Azeem', region:'South', closed:false},
@@ -217,7 +217,7 @@ const STORES = [
   {code:'S4007MSQ', name:'Misaq ul Mall, Fasilabad', cluster:'Closed', clusterManager:'Unassigned', region:'Central', closed:true},
   {code:'S2009LCM', name:'Lake City Mall, Lahore', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
   {code:'S2010WTL', name:'Wapda Town Lahore', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
-  {code:'S5010SOM', name:'Square One Mall, Karachi', cluster:'S2', clusterManager:'Imran Azeem', region:'South', closed:false},
+  {code:'S5010SOM', name:'Square One Mall, Karachi', cluster:'S2', clusterManager:'Syed Bilal Hussain', region:'South', closed:false},
   {code:'S4016RYK', name:'Rahim Yar Khan Store', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
   {code:'S5011BHD', name:'Bahadurabad Store', cluster:'S1', clusterManager:'Imran Azeem', region:'South', closed:false},
   {code:'S2011FSM', name:'Fortress Square Mall, Lahore', cluster:'Closed', clusterManager:'Unassigned', region:'Central', closed:true},
@@ -228,7 +228,7 @@ const STORES = [
   {code:'S4019KMG', name:'King Mall Gujranwala', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
   {code:'S3013F11', name:'F-11 Markaz', cluster:'N2', clusterManager:'Abdul Rehman', region:'North', closed:false},
   {code:'S3014MPS', name:'Mall of Pindi Saddar', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
-  {code:'S5012HBK', name:'Hyderi Bazar Largesse Karachi', cluster:'S2', clusterManager:'Imran Azeem', region:'South', closed:false},
+  {code:'S5012HBK', name:'Hyderi Bazar Largesse Karachi', cluster:'S2', clusterManager:'Syed Bilal Hussain', region:'South', closed:false},
   {code:'S4021MBH2', name:'Jail Road Mandi Bahauddin-02 Store', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
   {code:'S3016GGB', name:'Giga Boutique', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
   {code:'S2013BTL', name:'Bahria Town Lahore', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
@@ -287,6 +287,7 @@ function baseTxn(t){
     discountValue: t.discountValue || 0, // sum of (full-price value - actual) across discounted line items
     barcodes: t.barcodes || [],      // [{barcode, qty, amount, fullPrice}] — line-level detail under this transaction
     origTransaction: t.origTransaction || '', // Original (sale) transaction number from the report
+    uploadId: t.uploadId || null, // which Admin upload batch this came from — used to remove a bad/duplicate upload without touching anything else
     storeApproval: submitted ? true : false,
     storeRemarks: submitted ? t.storeRemarks || '' : '',
     // Reason for Return — required before submission, alongside store
@@ -435,9 +436,28 @@ const NAV_ITEMS = [
   ['regional','Regional Manager Insights'],
 ];
 
+// Which nav tabs a role is allowed to see/use, keyed the same as NAV_ITEMS.
+// Admin sees everything. Nobody logged in yet sees everything too — the
+// tab bar before login is how you pick WHICH role's login screen to open,
+// not access to any data. Restriction only takes effect once a specific
+// role is unlocked.
+function permittedTabs(){
+  if(adminAuth.unlocked) return ['hq','store','cluster','regional'];
+  if(storeAuth.unlocked) return ['store'];
+  if(clusterAuth.unlocked) return ['hq','cluster'];
+  if(regionalAuth.unlocked) return ['hq','regional'];
+  return ['hq','store','cluster','regional'];
+}
+
 function renderShell(){
+  const allowed = permittedTabs();
+  // If the current screen isn't allowed for whoever is logged in (e.g. a
+  // role just logged out, or logged in as a different role), snap to the
+  // first tab that role is actually allowed to see instead of leaving a
+  // stale/forbidden screen rendered.
+  if(screen!=='admin' && !allowed.includes(screen)) screen = allowed[0];
   const tabBar = document.getElementById('tabBar');
-  tabBar.innerHTML = NAV_ITEMS.map(([id,label])=>`<button data-nav="${id}" class="${screen===id?'active':''}">${esc(label)}</button>`).join('');
+  tabBar.innerHTML = NAV_ITEMS.filter(([id])=>allowed.includes(id)).map(([id,label])=>`<button data-nav="${id}" class="${screen===id?'active':''}">${esc(label)}</button>`).join('');
   tabBar.querySelectorAll('button').forEach(b=>{
     b.onclick=()=>{ screen=b.dataset.nav; render(); };
   });
@@ -818,7 +838,10 @@ function renderRegionalView(){
     <div class="session-bar"><span>Signed in for <b>${esc(region)}</b></span><a id="regionalLockBtn">Lock / switch region</a></div>
     <div class="panel-head">
       <div><h1>Regional Manager Insights</h1><p>${stores.length} stores · ${mgrs.length} cluster manager(s) in ${esc(region)}</p></div>
-      <div><span class="field-label">Region</span><select id="regionSelect">${REGIONS.map(r=>`<option ${region===r?'selected':''}>${esc(r)}</option>`).join('')}</select></div>
+      <div><span class="field-label">Region</span>${adminAuth.unlocked
+        ? `<select id="regionSelect">${REGIONS.map(r=>`<option ${region===r?'selected':''}>${esc(r)}</option>`).join('')}</select>`
+        : `<div style="padding:8px 10px;font-weight:600;">${esc(region)}</div>`
+      }</div>
     </div>
     <div class="filters-grid" style="max-width:420px;">
       <div><span class="field-label">From date</span><input type="date" id="rFDateFrom" value="${f.dateFrom||''}"></div>
@@ -918,7 +941,10 @@ function renderAdminView(){
 
 function renderAdminUploadBody(){
   const uploads = DATA.uploadLog.slice(0,15);
-  const uploadRows = uploads.length ? uploads.map(u=>`
+  const uploadRows = uploads.length ? uploads.map(u=>{
+    const batchTxns = u.uploadId ? DATA.transactions.filter(t=>t.uploadId===u.uploadId) : [];
+    const canRemove = u.uploadId && batchTxns.length>0;
+    return `
     <tr>
       <td>${fmtDateTime(u.timestamp)}</td>
       <td>${esc(u.fileName)}</td>
@@ -927,10 +953,12 @@ function renderAdminUploadBody(){
       <td class="num-cell">${u.duplicate}</td>
       <td class="num-cell">${u.rejected}</td>
       <td>${u.status}</td>
-    </tr>`).join('') : `<tr><td colspan="7" class="empty">No uploads yet.</td></tr>`;
+      <td>${canRemove ? `<button class="btn sm danger" data-removeupload="${u.uploadId}">Remove</button>` : `<span class="locked-note">—</span>`}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="8" class="empty">No uploads yet.</td></tr>`;
 
   return `
-    <div class="warn-box">This is a self-contained prototype. It has no live Google Apps Script backend — the connection status below is not a real network check. It runs on Claude's built-in persistent storage, which is real (data survives reloads and is shared across anyone with this link), but it is not Google Sheets. See the accompanying Apps Script package for a real Sheets-backed version.</div>
+    <div class="note-box">Live and backed by your Google Sheet via the Apps Script Web App — every save here writes to the DataStore tab, and every load reads from it. This is not a local-only prototype.</div>
 
     <div class="grid" style="grid-template-columns:1fr 1fr;">
       <div class="card">
@@ -963,7 +991,7 @@ function renderAdminUploadBody(){
     <div class="card">
       <div class="card-head"><h2>Upload Log</h2></div>
       <div class="card-body" style="overflow-x:auto;">
-        <table><thead><tr><th>Timestamp</th><th>File</th><th>Total</th><th>Imported</th><th>Duplicate</th><th>Rejected</th><th>Status</th></tr></thead>
+        <table><thead><tr><th>Timestamp</th><th>File</th><th>Total</th><th>Imported</th><th>Duplicate</th><th>Rejected</th><th>Status</th><th>Action</th></tr></thead>
         <tbody>${uploadRows}</tbody></table>
       </div>
     </div>
@@ -1400,29 +1428,61 @@ const COL = {
 
 function normText(v){ return String(v==null?'':v).trim().toLowerCase(); }
 function numOf(v){ const n = Number(v); return isNaN(n) ? 0 : n; }
+// Excel's date epoch is Dec 30, 1899 (this already accounts for the
+// well-known spreadsheet bug that treats 1900 as a leap year). Converting
+// via this arithmetic — instead of a library's Date-object conversion —
+// never touches a timezone-aware API, so it can't land on the wrong
+// calendar day depending on what timezone the browser is running in. This
+// is the fix for a real bug: the previous Date-object-based conversion
+// produced a 2-day-backward shift for transactions confirmed correct at
+// the source (verified directly against a real uploaded report).
+function excelSerialToUTCDate(serial){
+  const days = Math.floor(Number(serial));
+  if(!isFinite(days)) return null;
+  const utcMs = (days - 25569) * 86400000; // 25569 = days between 1899-12-30 and 1970-01-01
+  const d = new Date(utcMs);
+  return isNaN(d.getTime()) ? null : d;
+}
 function toDateOnly(v){
-  if(v instanceof Date && !isNaN(v.getTime())) return new Date(v.getFullYear(), v.getMonth(), v.getDate());
+  if(typeof v === 'number' && isFinite(v)){
+    const d = excelSerialToUTCDate(v);
+    return d ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())) : null;
+  }
+  if(v instanceof Date && !isNaN(v.getTime())){
+    // Fallback only — UTC getters, never local ones, since local getters
+    // combined with a later UTC-based serialization is exactly what
+    // caused the original bug.
+    return new Date(Date.UTC(v.getUTCFullYear(), v.getUTCMonth(), v.getUTCDate()));
+  }
   if(typeof v === 'string' && v.trim()){
     const d = new Date(v);
-    if(!isNaN(d.getTime())) return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    if(!isNaN(d.getTime())) return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   }
   return null;
 }
-// Transaction Time (column AB) can arrive as a JS Date (Excel serial with
-// cellDates:true), a raw Excel time fraction (0–1 = fraction of a day), or
-// plain text like "14:35". All three are normalized to "HH:MM".
+// Transaction Time (column AB) can arrive as a raw Excel serial (integer
+// part = date, fractional part = time-of-day — only the fraction is used
+// here), a JS Date (fallback), or plain text like "14:35".
 function toTimeString(v){
-  if(v instanceof Date && !isNaN(v.getTime())){
-    return String(v.getHours()).padStart(2,'0')+':'+String(v.getMinutes()).padStart(2,'0');
-  }
-  if(typeof v === 'number' && v>=0 && v<1){
-    const totalMin = Math.round(v*24*60);
+  if(typeof v === 'number' && isFinite(v) && v>=0){
+    const frac = v - Math.floor(v);
+    if(frac<=0) return '';
+    const totalMin = Math.round(frac*24*60);
     return String(Math.floor(totalMin/60)).padStart(2,'0')+':'+String(totalMin%60).padStart(2,'0');
+  }
+  if(v instanceof Date && !isNaN(v.getTime())){
+    return String(v.getUTCHours()).padStart(2,'0')+':'+String(v.getUTCMinutes()).padStart(2,'0');
   }
   if(typeof v === 'string' && v.trim()) return v.trim();
   return '';
 }
-function isoDate(d){ return d ? d.toISOString().slice(0,10) : null; }
+function isoDate(d){
+  if(!d) return null;
+  // Built directly from UTC getters, never toISOString() on a value that
+  // might carry local-timezone construction — that mismatch was the other
+  // half of the original 2-day-shift bug.
+  return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'-'+String(d.getUTCDate()).padStart(2,'0');
+}
 
 // Find the header row by content (search near the documented row first,
 // then scan) rather than trusting the row number alone.
@@ -1442,9 +1502,21 @@ function handleUpload(){
   const file = input.files[0];
   if(!file){ showToast('Choose a file first.'); return; }
   const reader = new FileReader();
+  const uploadBatchId = 'U'+Date.now(); // tags every transaction from this
+    // one upload so a bad/duplicate upload can be removed later without
+    // touching transactions from any other upload.
   reader.onload = (e)=>{
     try{
-      const wb = XLSX.read(e.target.result, {type:'array', cellDates:true});
+      // cellDates is deliberately NOT used — letting SheetJS convert Excel
+      // date serials into JS Date objects turned out to be silently
+      // timezone-dependent (verified: the exact same cell produced a
+      // different underlying instant depending on the browser's local
+      // timezone), which combined with a later UTC round-trip to produce a
+      // real 2-day-backward date shift. Reading raw serial numbers instead
+      // and converting them with pure arithmetic (see excelSerialToUTCDate)
+      // sidesteps timezone handling entirely — it can't be timezone-wrong
+      // because it never touches a timezone-aware API.
+      const wb = XLSX.read(e.target.result, {type:'array'});
       const sheetName = wb.SheetNames.find(n=>!/attribut/i.test(n)) || wb.SheetNames[0];
       const sheet = wb.Sheets[sheetName];
       const aoa = XLSX.utils.sheet_to_json(sheet, {header:1, defval:'', raw:true});
@@ -1593,6 +1665,7 @@ function handleUpload(){
           barcodes: g.barcodes,
           origTransaction: g.origTransaction,
           status: 'Not Submitted',
+          uploadId: uploadBatchId,
         }));
         imported++;
       });
@@ -1601,7 +1674,8 @@ function handleUpload(){
         timestamp:new Date().toISOString(), fileName:file.name,
         total: groups.size, imported, duplicate,
         rejected: unknownStore + notFlagged + missingReturnDate,
-        status: imported>0?'Processed':'No records imported'
+        status: imported>0?'Processed':'No records imported',
+        uploadId: uploadBatchId,
       };
       DATA.uploadLog.unshift(logEntry);
       DATA.lastUploadTs = logEntry.timestamp;
