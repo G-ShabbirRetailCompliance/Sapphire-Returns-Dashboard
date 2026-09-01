@@ -151,6 +151,7 @@
   </div>
   <div style="display:flex;align-items:center;gap:16px;">
     <div class="clock" id="clockBox"></div>
+    <button class="btn sm secondary" id="manualRefreshBtn" title="Refresh now">↻ Refresh</button>
     <a id="adminEntryLink" title="Administrator access" style="font-size:11px;color:#7c93a3;cursor:pointer;text-decoration:underline;white-space:nowrap;">Admin</a>
   </div>
 </header>
@@ -280,6 +281,7 @@ function baseTxn(t){
     amount: t.amount,                // summed Return Total Amount
     paymentMethod: t.paymentMethod || '',
     date: t.date,                    // Return Date, yyyy-mm-dd
+    time: t.time || '',              // Transaction Time, HH:MM (from report column AB)
     agingDays: t.agingDays ?? null,  // Return Date - Original Date, only set when known
     priceType: t.priceType || 'N/A', // 'Full Price' | 'Discounted' | 'Mixed' | 'N/A'
     discountValue: t.discountValue || 0, // sum of (full-price value - actual) across discounted line items
@@ -322,7 +324,7 @@ let ctx = { region: REGIONS[0] };
 let editingActive = false;
 function statusBucket(status){ return status==='Signed Off' ? 'Signed Off' : status==='Not Submitted' ? 'Not Started' : 'Open Items'; }
 let lastLoadedTs = null;
-const REFRESH_INTERVAL_SECONDS = 600; // 10 minutes — left as-is on request, not changed to 1 minute
+const REFRESH_INTERVAL_SECONDS = 60; // 1 minute, per request
 let nextRefreshIn = REFRESH_INTERVAL_SECONDS;
 let regionalAuth = { unlocked:false, region: REGIONS[0] };
 
@@ -601,7 +603,7 @@ function flattenToLines(rows){
 }
 
 function renderStoreCategoryTable(cat, rows, store){
-  const cols = ['Return Date','Transaction No.','Barcode','Return Qty','Return Amount','Payment Method']
+  const cols = ['Return Date','Time','Transaction No.','Barcode','Return Qty','Return Amount','Payment Method']
     .concat(cat==='over30' ? ['Aging (days)'] : [])
     .concat(['Price Type','Original Transaction','Is Approved by Manager','Reason for Return','Store Remarks','Status','Cluster Review','Cluster Manager Review 2']);
 
@@ -613,6 +615,7 @@ function renderStoreCategoryTable(cat, rows, store){
     const priceTypeLine = b.fullPrice===true ? 'Full Price' : b.fullPrice===false ? 'Discounted' : t.priceType;
     return `<tr>
       <td>${fmtDate(t.date)}</td>
+      <td class="mono">${esc(t.time)||"—"}</td>
       <td class="mono">${esc(t.transactionNumber)}</td>
       <td class="mono">${esc(b.barcode)}</td>
       <td class="num-cell">${b.qty}</td>
@@ -703,7 +706,7 @@ function renderClusterView(){
 
   const queue = all.filter(t=>t.status==='Awaiting Review').sort((a,b)=>a.date<b.date?1:-1);
   const queueLines = flattenToLines(queue);
-  const QUEUE_COLS = 16;
+  const QUEUE_COLS = 17;
 
   const queueRows = queueLines.length ? queueLines.map(({t,b,idx})=>{
     const store = storeByCode(t.storeCode);
@@ -711,6 +714,7 @@ function renderClusterView(){
     return `<tr>
       <td>${idx!==0?'':esc(store.name)}</td>
       <td>${fmtDate(t.date)}</td>
+      <td class="mono">${esc(t.time)||"—"}</td>
       <td class="mono">${esc(t.transactionNumber)}</td>
       <td class="mono">${esc(b.barcode)}</td>
       <td class="num-cell">${b.qty}</td>
@@ -758,7 +762,7 @@ function renderClusterView(){
     <div class="card">
       <div class="card-head"><h2>Review Queue</h2><span class="count">${queue.length} awaiting</span></div>
       <div class="card-body" style="overflow-x:auto;">
-        <table><thead><tr><th>Store</th><th>Return Date</th><th>Transaction No.</th><th>Barcode</th><th>Return Qty</th><th>Return Amount</th><th>Payment Method</th><th>Price Type</th><th>Original Transaction</th><th>Reason for Return</th><th>Store Remarks</th><th>Status</th><th>Cluster Review</th><th>Cluster Manager Review 2</th><th>Cluster Remarks (this round)</th><th>Action</th></tr></thead>
+        <table><thead><tr><th>Store</th><th>Return Date</th><th>Time</th><th>Transaction No.</th><th>Barcode</th><th>Return Qty</th><th>Return Amount</th><th>Payment Method</th><th>Price Type</th><th>Original Transaction</th><th>Reason for Return</th><th>Store Remarks</th><th>Status</th><th>Cluster Review</th><th>Cluster Manager Review 2</th><th>Cluster Remarks (this round)</th><th>Action</th></tr></thead>
         <tbody>${queueRows}</tbody></table>
       </div>
     </div>
@@ -1201,6 +1205,21 @@ function bindDynamicHandlers(){
   // Admin entry (small link in header, not part of main tabs)
   const adminEntryLink = document.getElementById('adminEntryLink');
   if(adminEntryLink) adminEntryLink.onclick = ()=>{ screen='admin'; render(); };
+  const manualRefreshBtn = document.getElementById('manualRefreshBtn');
+  if(manualRefreshBtn) manualRefreshBtn.onclick = async ()=>{
+    manualRefreshBtn.disabled = true; manualRefreshBtn.textContent = 'Refreshing...';
+    const fresh = await fetchDataFromBackend();
+    manualRefreshBtn.disabled = false; manualRefreshBtn.textContent = '↻ Refresh';
+    if(fresh){
+      DATA = fresh;
+      lastLoadedTs = new Date().toISOString();
+      nextRefreshIn = REFRESH_INTERVAL_SECONDS; // manual refresh also resets the auto-refresh countdown
+      render();
+      showToast('Refreshed.');
+    } else {
+      showToast('Refresh failed — still showing the last successfully loaded data.', 6000);
+    }
+  };
 
   const adminUnlockBtn = document.getElementById('adminUnlockBtn');
   if(adminUnlockBtn) adminUnlockBtn.onclick = async ()=>{
@@ -1374,6 +1393,9 @@ const COL = {
   ORIG_STORE:12, ORIG_STORE_NAME:13, PHONE:14, SOLD_ITEM:15, SOLD_BARCODE:16, SOLD_QTY:17, SOLD_UNIT_PRICE:18,
   SOLD_TOTAL:19, RETURN_ITEM:20, RETURN_BARCODE:21, RETURN_PRICE:22, RETURN_QTY:23, RETURN_TOTAL:24,
   TXN_TYPE:25, PAYMENT_METHOD:26,
+  TRANSACTION_TIME:27, // column AB — new. Read positionally, not header-name
+                       // checked, since the exact label you give it in the
+                       // report isn't fixed yet; whatever's in AB is used.
 };
 
 function normText(v){ return String(v==null?'':v).trim().toLowerCase(); }
@@ -1385,6 +1407,20 @@ function toDateOnly(v){
     if(!isNaN(d.getTime())) return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   }
   return null;
+}
+// Transaction Time (column AB) can arrive as a JS Date (Excel serial with
+// cellDates:true), a raw Excel time fraction (0–1 = fraction of a day), or
+// plain text like "14:35". All three are normalized to "HH:MM".
+function toTimeString(v){
+  if(v instanceof Date && !isNaN(v.getTime())){
+    return String(v.getHours()).padStart(2,'0')+':'+String(v.getMinutes()).padStart(2,'0');
+  }
+  if(typeof v === 'number' && v>=0 && v<1){
+    const totalMin = Math.round(v*24*60);
+    return String(Math.floor(totalMin/60)).padStart(2,'0')+':'+String(totalMin%60).padStart(2,'0');
+  }
+  if(typeof v === 'string' && v.trim()) return v.trim();
+  return '';
 }
 function isoDate(d){ return d ? d.toISOString().slice(0,10) : null; }
 
@@ -1444,6 +1480,7 @@ function handleUpload(){
             key,
             storeCode: String(row[COL.STORE_CODE]||'').trim(),
             returnDate: toDateOnly(row[COL.RETURN_DATE]),
+            txnTime: toTimeString(row[COL.TRANSACTION_TIME]),
             origTransaction: '', origDate: null, paymentMethod: '', txnType: '',
             returnQty: 0, returnTotal: 0, soldTotal: 0, itemCount: 0,
             fullPriceItemCount: 0, discountedItemCount: 0, discountValue: 0,
@@ -1549,6 +1586,7 @@ function handleUpload(){
           amount: complianceAmount,
           paymentMethod: g.paymentMethod,
           date: isoDate(g.returnDate),
+          time: g.txnTime || '',
           agingDays,
           priceType,
           discountValue: g.discountValue,
