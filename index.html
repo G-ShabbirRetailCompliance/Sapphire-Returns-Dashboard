@@ -75,6 +75,12 @@
   td{padding:8px 10px;border-bottom:1px solid #EEF1F4;vertical-align:top;}
   tr:last-child td{border-bottom:none;}
   tbody tr:hover{background:#F8FAFB;}
+  /* Compact variant for wide multi-column summary tables (Store Summary,
+     Cluster/Regional KPI rows) so they fit without excessive horizontal
+     scroll on a laptop screen. */
+  .compact-table th{padding:5px 6px;font-size:10.5px;white-space:normal;}
+  .compact-table td{padding:4px 6px;font-size:11.5px;}
+  .compact-table td:first-child{white-space:nowrap;}
   .mono{font-family:var(--mono);font-size:11.8px;color:var(--ink-600);}
   .num-cell{text-align:right;font-variant-numeric:tabular-nums;}
 
@@ -232,6 +238,7 @@ const REGIONS = [...new Set(STORES.map(s=>s.region))];
 // workflow level — Full Price Sale Return transactions are now tracked instead of
 // plain Credit Memo settlements (see import classification below).
 const CATEGORY_LABEL = {refund:'Refund Transactions', over30:'Returns Over 30 Days', fullprice:'Full Price Sale Return Transactions'};
+const REASON_OPTIONS = ['Missing Component','Damage Product','Size Issue','Incorrect Charging','Quality Issue','Wrong product punched','Double bill punched','Other'];
 const STATUS_LIST = ['Not Submitted','Awaiting Review','Re-Review','Signed Off'];
 const STORAGE_KEY = 'sapphire-returns-dashboard-v1';
 
@@ -245,8 +252,8 @@ const STORAGE_KEY = 'sapphire-returns-dashboard-v1';
    3. Paste the same SHARED_SECRET value you set at the top of
       Code.gs below — it must match exactly on both sides.
    ========================================================= */
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxdBbcbs5u8905ydzMEhu-SnvkgnT4naDAuIE1u9DLDngBmx9I1dbeis6_L1lrNrmKZ/exec'; // e.g. https://script.google.com/macros/s/AKfycb.../exec
-const SHARED_SECRET = 'SapphireRetailSecure2026#X7'; // must match Code.gs
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxdBbcbs5u8905ydzMEhu-SnvkgnT4naDAuIE1u9DLDngBmx9I1dbeis6_L1lrNrmKZ/exec';
+const SHARED_SECRET = 'SapphireRetailSecure#2026X9'; // must match Code.gs
 
 function storeByCode(c){ return STORES.find(s=>s.code===c); }
 
@@ -280,6 +287,10 @@ function baseTxn(t){
     origTransaction: t.origTransaction || '', // Original (sale) transaction number from the report
     storeApproval: submitted ? true : false,
     storeRemarks: submitted ? t.storeRemarks || '' : '',
+    // Reason for Return — required before submission, alongside store
+    // remarks. If reason==='Other', reasonRemarks holds the free-text note.
+    reason: t.reason || '',
+    reasonRemarks: t.reasonRemarks || '',
     clusterRemarks: t.clusterRemarks || '',
     // reviewHistory: one entry per Cluster Manager decision round.
     // reviewHistory[0] = "Cluster Review" (first decision: Signed Off or Re-Review).
@@ -445,6 +456,19 @@ function renderClock(){
 function render(){
   renderShell();
   const main = document.getElementById('mainArea');
+  // Admin, once logged in, can open any Store / Cluster / Regional tab
+  // without a second password — that's the whole point of being Admin.
+  // A default selection is picked automatically the first time so the
+  // view has something to show; each view exposes its own selector (see
+  // renderStoreView / renderClusterView) so Admin can switch between
+  // stores/managers/regions without ever hitting a login gate.
+  if(adminAuth.unlocked){
+    if(!storeAuth.storeCode) storeAuth.storeCode = STORES.filter(s=>!s.closed)[0].code;
+    storeAuth.unlocked = true;
+    if(!clusterAuth.clusterManager) clusterAuth.clusterManager = CLUSTER_MANAGERS[0];
+    clusterAuth.unlocked = true;
+    regionalAuth.unlocked = true;
+  }
   if(screen==='store') main.innerHTML = storeAuth.unlocked ? renderStoreView() : renderStoreLogin();
   else if(screen==='cluster') main.innerHTML = clusterAuth.unlocked ? renderClusterView() : renderClusterLogin();
   else if(screen==='regional') main.innerHTML = regionalAuth.unlocked ? renderRegionalView() : renderRegionalLogin();
@@ -535,7 +559,13 @@ function renderStoreView(){
   }).join('');
 
   return `
-    <div class="session-bar"><span>Signed in as <b>${esc(store.name)}</b></span><a id="storeLockBtn">Lock / switch store</a></div>
+    <div class="session-bar">
+      <span>Signed in as <b>${esc(store.name)}</b></span>
+      ${adminAuth.unlocked
+        ? `<select id="adminStoreSwitch" style="margin-left:10px;">${STORES.filter(s=>!s.closed).map(s=>`<option value="${s.code}" ${s.code===store.code?'selected':''}>${esc(s.name)}</option>`).join('')}</select>`
+        : `<a id="storeLockBtn">Lock / switch store</a>`
+      }
+    </div>
     <div class="panel-head">
       <div>
         <h1>${esc(store.name)} — Store Entry</h1>
@@ -573,7 +603,7 @@ function flattenToLines(rows){
 function renderStoreCategoryTable(cat, rows, store){
   const cols = ['Return Date','Transaction No.','Barcode','Return Qty','Return Amount','Payment Method']
     .concat(cat==='over30' ? ['Aging (days)'] : [])
-    .concat(['Price Type','Original Transaction','Is Approved by Manager','Store Remarks','Status','Cluster Review','Cluster Manager Review 2']);
+    .concat(['Price Type','Original Transaction','Is Approved by Manager','Reason for Return','Store Remarks','Status','Cluster Review','Cluster Manager Review 2']);
 
   const lines = flattenToLines(rows);
 
@@ -592,6 +622,7 @@ function renderStoreCategoryTable(cat, rows, store){
       <td>${esc(priceTypeLine)}</td>
       <td class="mono">${esc(t.origTransaction||'—')}</td>
       <td>${idx!==0 ? '' : (editable ? `<input type="checkbox" data-approve="${t.id}" ${t.storeApproval?'checked':''}>` : (t.storeApproval? '✓':'—'))}</td>
+      <td style="min-width:170px;">${idx!==0 ? '' : reasonCell(t, editable)}</td>
       <td style="min-width:200px;">${idx!==0 ? '' : (
         editable
           ? `<textarea data-remark="${t.id}" placeholder="Store remarks...">${esc(t.storeRemarks)}</textarea>`
@@ -612,6 +643,23 @@ function renderStoreCategoryTable(cat, rows, store){
         <table><thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>
       </div>
     </div>`;
+}
+
+// Reason for Return cell: a dropdown when editable, plus a free-text box
+// that only appears when "Other" is selected. Locked to plain text once the
+// transaction is submitted, same as Store Remarks.
+function reasonCell(t, editable){
+  if(!editable){
+    const label = t.reason==='Other' ? `Other — ${esc(t.reasonRemarks)||'(no remarks)'}` : (t.reason||'—');
+    return `<div class="remark-locked">${esc(label)}</div>`;
+  }
+  return `
+    <select data-reason="${t.id}">
+      <option value="">Select reason...</option>
+      ${REASON_OPTIONS.map(r=>`<option value="${esc(r)}" ${t.reason===r?'selected':''}>${esc(r)}</option>`).join('')}
+    </select>
+    ${t.reason==='Other' ? `<textarea data-reasonremarks="${t.id}" placeholder="Remarks for Other..." style="margin-top:6px;">${esc(t.reasonRemarks)}</textarea>` : ''}
+  `;
 }
 
 /* =========================================================
@@ -655,7 +703,7 @@ function renderClusterView(){
 
   const queue = all.filter(t=>t.status==='Awaiting Review').sort((a,b)=>a.date<b.date?1:-1);
   const queueLines = flattenToLines(queue);
-  const QUEUE_COLS = 15;
+  const QUEUE_COLS = 16;
 
   const queueRows = queueLines.length ? queueLines.map(({t,b,idx})=>{
     const store = storeByCode(t.storeCode);
@@ -670,6 +718,7 @@ function renderClusterView(){
       <td>${esc(t.paymentMethod||'—')}</td>
       <td>${esc(priceTypeLine)}</td>
       <td class="mono">${esc(t.origTransaction||'—')}</td>
+      <td>${idx!==0?'':esc(t.reason==='Other'?`Other — ${t.reasonRemarks||'(no remarks)'}`:(t.reason||'—'))}</td>
       <td>${idx!==0?'':`<div class="remark-locked">${esc(t.storeRemarks)||'—'}</div>`}</td>
       <td>${idx!==0?'':badge(t.status)}</td>
       <td style="min-width:160px;">${idx!==0?'':reviewRoundCell(t,1)}</td>
@@ -683,7 +732,13 @@ function renderClusterView(){
   }).join('') : `<tr><td colspan="${QUEUE_COLS}" class="empty">No transactions awaiting review.</td></tr>`;
 
   return `
-    <div class="session-bar"><span>Reviewing as <b>${esc(mgr)}</b></span><a id="clusterLockBtn">Lock / switch manager</a></div>
+    <div class="session-bar">
+      <span>Reviewing as <b>${esc(mgr)}</b></span>
+      ${adminAuth.unlocked
+        ? `<select id="adminClusterSwitch" style="margin-left:10px;">${CLUSTER_MANAGERS.map(m=>`<option value="${esc(m)}" ${m===mgr?'selected':''}>${esc(m)}</option>`).join('')}</select>`
+        : `<a id="clusterLockBtn">Lock / switch manager</a>`
+      }
+    </div>
     <div class="panel-head">
       <div><h1>Cluster Review — ${esc(mgr)}</h1><p>${stores.map(s=>s.name).join(', ')}</p></div>
     </div>
@@ -696,14 +751,14 @@ function renderClusterView(){
     <div class="card">
       <div class="card-head"><h2>Store Summary</h2></div>
       <div class="card-body" style="overflow-x:auto;">
-        <table><thead><tr><th>Store</th><th>Refund Txns</th><th>Refund Qty</th><th>Refund Value</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Qty</th><th>Return&gt;30 Value</th><th>Full Price Txns</th><th>Full Price Qty</th><th>Full Price Value</th><th>Signed Off</th><th>Awaiting</th><th>Re-Review</th><th>Not Submitted</th></tr></thead>
+        <table class="compact-table"><thead><tr><th>Store</th><th>Refund Txns</th><th>Refund Qty</th><th>Refund Value</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Qty</th><th>Return&gt;30 Value</th><th>Full Price Txns</th><th>Full Price Qty</th><th>Full Price Value</th><th>Signed Off</th><th>Awaiting</th><th>Re-Review</th><th>Not Submitted</th></tr></thead>
         <tbody>${summaryRows}</tbody></table>
       </div>
     </div>
     <div class="card">
       <div class="card-head"><h2>Review Queue</h2><span class="count">${queue.length} awaiting</span></div>
       <div class="card-body" style="overflow-x:auto;">
-        <table><thead><tr><th>Store</th><th>Return Date</th><th>Transaction No.</th><th>Barcode</th><th>Return Qty</th><th>Return Amount</th><th>Payment Method</th><th>Price Type</th><th>Original Transaction</th><th>Store Remarks</th><th>Status</th><th>Cluster Review</th><th>Cluster Manager Review 2</th><th>Cluster Remarks (this round)</th><th>Action</th></tr></thead>
+        <table><thead><tr><th>Store</th><th>Return Date</th><th>Transaction No.</th><th>Barcode</th><th>Return Qty</th><th>Return Amount</th><th>Payment Method</th><th>Price Type</th><th>Original Transaction</th><th>Reason for Return</th><th>Store Remarks</th><th>Status</th><th>Cluster Review</th><th>Cluster Manager Review 2</th><th>Cluster Remarks (this round)</th><th>Action</th></tr></thead>
         <tbody>${queueRows}</tbody></table>
       </div>
     </div>
@@ -770,7 +825,7 @@ function renderRegionalView(){
     <div class="card">
       <div class="card-head"><h2>Cluster Manager Summary — ${esc(region)}</h2></div>
       <div class="card-body" style="overflow-x:auto;">
-        <table><thead>${CLUSTER_TABLE_HEAD}</thead><tbody>${rows}</tbody></table>
+        <table class="compact-table"><thead>${CLUSTER_TABLE_HEAD}</thead><tbody>${rows}</tbody></table>
       </div>
     </div>
   `;
@@ -832,7 +887,7 @@ function renderHQView(){
     <div class="card">
       <div class="card-head"><h2>Cluster Manager-wise Summary</h2></div>
       <div class="card-body" style="overflow-x:auto;">
-        <table><thead>${CLUSTER_TABLE_HEAD}</thead><tbody>${clusterRows}</tbody></table>
+        <table class="compact-table"><thead>${CLUSTER_TABLE_HEAD}</thead><tbody>${clusterRows}</tbody></table>
       </div>
     </div>
   `;
@@ -970,6 +1025,28 @@ function bindDynamicHandlers(){
       persistQuiet();
     });
   });
+  // Reason for Return dropdown + its "Other" free-text follow-up.
+  document.querySelectorAll('[data-reason]').forEach(el=>{
+    el.onchange = ()=>{
+      const t = DATA.transactions.find(x=>x.id===el.dataset.reason);
+      if(t) t.reason = el.value;
+      persistQuiet();
+      render(); // re-render so the "Other" textarea appears/disappears immediately
+    };
+  });
+  document.querySelectorAll('[data-reasonremarks]').forEach(el=>{
+    el.addEventListener('focus', ()=>editingActive=true);
+    el.addEventListener('input', ()=>{
+      const t = DATA.transactions.find(x=>x.id===el.dataset.reasonremarks);
+      if(t) t.reasonRemarks = el.value;
+    });
+    el.addEventListener('blur', ()=>{
+      editingActive=false;
+      const t = DATA.transactions.find(x=>x.id===el.dataset.reasonremarks);
+      if(t) t.reasonRemarks = el.value;
+      persistQuiet();
+    });
+  });
   document.querySelectorAll('[data-clusterremark]').forEach(el=>{
     el.addEventListener('focus', ()=>editingActive=true);
     el.addEventListener('blur', ()=>{
@@ -1073,6 +1150,8 @@ function bindDynamicHandlers(){
   };
   const storeLockBtn = document.getElementById('storeLockBtn');
   if(storeLockBtn) storeLockBtn.onclick = ()=>{ storeAuth.unlocked = false; render(); };
+  const adminStoreSwitch = document.getElementById('adminStoreSwitch');
+  if(adminStoreSwitch) adminStoreSwitch.onchange = ()=>{ storeAuth.storeCode = adminStoreSwitch.value; render(); };
 
   // Cluster login gate
   const loginClusterSelect = document.getElementById('loginClusterSelect');
@@ -1094,6 +1173,8 @@ function bindDynamicHandlers(){
   };
   const clusterLockBtn = document.getElementById('clusterLockBtn');
   if(clusterLockBtn) clusterLockBtn.onclick = ()=>{ clusterAuth.unlocked = false; render(); };
+  const adminClusterSwitch = document.getElementById('adminClusterSwitch');
+  if(adminClusterSwitch) adminClusterSwitch.onchange = ()=>{ clusterAuth.clusterManager = adminClusterSwitch.value; render(); };
 
   // Regional login gate
   const loginRegionalSelect = document.getElementById('loginRegionalSelect');
@@ -1172,6 +1253,11 @@ function updateSubmitButtonState(){
 function submitStoreDrafts(storeCode){
   const drafts = DATA.transactions.filter(t=>t.storeCode===storeCode && t.status==='Not Submitted' && t.storeApproval);
   if(!drafts.length){ showToast('No approved draft transactions to submit.'); return; }
+  const missingReason = drafts.filter(t=>!t.reason || (t.reason==='Other' && !t.reasonRemarks.trim()));
+  if(missingReason.length){
+    showToast(`${missingReason.length} approved transaction(s) are missing a Reason for Return (or remarks for "Other") — select one before submitting.`, 6000);
+    return;
+  }
   const today = new Date().toISOString();
   drafts.forEach(t=>{
     t.status='Awaiting Review';
@@ -1398,7 +1484,7 @@ function handleUpload(){
         if(!g.txnType && row[COL.TXN_TYPE]) g.txnType = String(row[COL.TXN_TYPE]).trim();
       });
 
-      let imported=0, duplicate=0, unknownStore=0, notFlagged=0;
+      let imported=0, duplicate=0, unknownStore=0, notFlagged=0, missingReturnDate=0;
       const existingKeys = new Set(DATA.transactions.map(t=>t.transactionNumber));
       let nextId = DATA.transactions.length + 1;
 
@@ -1446,6 +1532,13 @@ function handleUpload(){
         if(g.fullPriceItemCount>0 && g.discountedItemCount===0) priceType = 'Full Price';
         else if(g.discountedItemCount>0 && g.fullPriceItemCount===0) priceType = 'Discounted';
         else if(g.fullPriceItemCount>0 && g.discountedItemCount>0) priceType = 'Mixed';
+        // The report's own Return Date column decides which day a transaction
+        // is filed under everywhere in this dashboard — NOT the date it was
+        // uploaded/imported. If that column can't be parsed for a given
+        // transaction, it is rejected rather than silently defaulted to
+        // today's date, since a silent default would misfile it under the
+        // wrong day in every date-range filter.
+        if(!g.returnDate){ missingReturnDate++; return; }
         DATA.transactions.push(baseTxn({
           id: 'T'+String(nextId++).padStart(5,'0'),
           category,
@@ -1455,7 +1548,7 @@ function handleUpload(){
           qty: g.returnQty,
           amount: complianceAmount,
           paymentMethod: g.paymentMethod,
-          date: isoDate(g.returnDate) || new Date().toISOString().slice(0,10),
+          date: isoDate(g.returnDate),
           agingDays,
           priceType,
           discountValue: g.discountValue,
@@ -1469,17 +1562,17 @@ function handleUpload(){
       const logEntry = {
         timestamp:new Date().toISOString(), fileName:file.name,
         total: groups.size, imported, duplicate,
-        rejected: unknownStore + notFlagged,
+        rejected: unknownStore + notFlagged + missingReturnDate,
         status: imported>0?'Processed':'No records imported'
       };
       DATA.uploadLog.unshift(logEntry);
       DATA.lastUploadTs = logEntry.timestamp;
-      addAudit({user:'Admin', role:'Admin', action:`Admin Uploaded Return Report (${file.name})`, transaction:'—', prevStatus:'—', newStatus:'—', remarks:`${imported} imported, ${duplicate} duplicate, ${unknownStore} unknown store, ${notFlagged} not flagged (clean exchange), ${skippedNoKey} rows with no Transaction key`});
+      addAudit({user:'Admin', role:'Admin', action:`Admin Uploaded Return Report (${file.name})`, transaction:'—', prevStatus:'—', newStatus:'—', remarks:`${imported} imported, ${duplicate} duplicate, ${unknownStore} unknown store, ${notFlagged} not flagged (clean exchange), ${missingReturnDate} unparseable return date, ${skippedNoKey} rows with no Transaction key`});
       saveData(DATA);
 
       document.getElementById('uploadSummaryBox').innerHTML = `
         <div class="note-box" style="margin-top:12px;">
-          <b>Upload Summary</b> — Distinct transactions: ${groups.size} · Imported: ${imported} · Duplicate (already in system): ${duplicate} · Unknown store code: ${unknownStore} · Not flagged / clean exchange (skipped, not a compliance item): ${notFlagged}${skippedNoKey?` · Rows with no Transaction key: ${skippedNoKey}`:''}
+          <b>Upload Summary</b> — Distinct transactions: ${groups.size} · Imported: ${imported} · Duplicate (already in system): ${duplicate} · Unknown store code: ${unknownStore} · Not flagged / clean exchange (skipped, not a compliance item): ${notFlagged}${missingReturnDate?` · <b>Unparseable Return Date (skipped — fix and re-upload): ${missingReturnDate}</b>`:''}${skippedNoKey?` · Rows with no Transaction key: ${skippedNoKey}`:''}
         </div>`;
       showToast(`Import complete: ${imported} new transaction(s) added.`);
       render();
