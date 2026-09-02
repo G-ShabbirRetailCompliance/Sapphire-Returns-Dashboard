@@ -449,6 +449,50 @@ async function saveReviewDecision(txn, reviewEntry, auditEntry){
 async function saveUpload(newTxns, uploadLogEntry, auditEntry){
   return postAction('appendUpload', { transactions: newTxns, uploadLogEntry, auditEntry });
 }
+async function removeUpload(uploadId){
+  const batchTxns = DATA.transactions.filter(t=>t.uploadId===uploadId);
+  if(!batchTxns.length){ showToast('Nothing to remove — this upload has no transactions on file.'); return; }
+  const stillMoving = batchTxns.filter(t=>t.status!=='Not Submitted');
+  if(stillMoving.length){
+    showToast(stillMoving.length+' of '+batchTxns.length+' transaction(s) from this upload have already been submitted or reviewed — remove is only allowed while the whole batch is still Not Submitted.', 6000);
+    return;
+  }
+  if(!confirm(`Remove this upload? ${batchTxns.length} transaction(s) will be permanently deleted from the sheet. This cannot be undone.`)) return;
+  const result = await postAction('removeUpload', { uploadId });
+  if(result){
+    // Drop them locally too so the screen updates without waiting on a reload.
+    DATA.transactions = DATA.transactions.filter(t=>t.uploadId!==uploadId);
+    const log = DATA.uploadLog.find(u=>u.uploadId===uploadId);
+    if(log) log.status = 'Removed';
+    showToast(`${batchTxns.length} transaction(s) removed.`);
+    render();
+  }
+}
+// Test-data cleanup: clears Store Approval / Store & Cluster Remarks /
+// Reason / review history on ONE transaction and sets it back to Not
+// Submitted. Does not delete the transaction row itself, and does not
+// touch anything else from the same store or upload — this is for
+// undoing your own test clicks (approve/remarks/sign-off), not a bulk
+// wipe. Logged as a normal audit entry, same as every other action.
+async function resetTransactionByAdmin(query){
+  const q = (query||'').trim();
+  if(!q){ showToast('Enter a Transaction No. or ID first.'); return; }
+  const t = DATA.transactions.find(x=>x.id===q || x.transactionNumber===q);
+  if(!t){ showToast('No transaction found with that Transaction No. or ID.'); return; }
+  if(t.status==='Not Submitted' && !t.storeRemarks && !t.clusterRemarks && !t.reason){
+    showToast(`${t.transactionNumber} is already at its default state — nothing to reset.`);
+    return;
+  }
+  if(!confirm(`Reset transaction ${t.transactionNumber} (${t.storeCode})? This clears approval, remarks, reason and review history, and sets it back to Not Submitted. This cannot be undone.`)) return;
+  const ok = await postAction('resetTransaction', { id: t.id, resetBy: 'Admin' });
+  if(ok){
+    t.storeApproval=false; t.storeRemarks=''; t.reason=''; t.reasonRemarks=''; t.clusterRemarks='';
+    t.status='Not Submitted'; t.submittedDate=null; t.reviewedDate=null; t.reviewHistory=[];
+    t.lastUpdated=new Date().toISOString(); t.lastUpdatedBy='Admin (reset)';
+    showToast(`Transaction ${t.transactionNumber} reset to Not Submitted.`);
+    render();
+  }
+}
 function renderSaveIndicator(){
   const box = document.getElementById('clockBox');
   if(!box) return;
@@ -971,13 +1015,18 @@ function renderHQView(){
     return clusterKpiRow(m, mgrStores, ts);
   }).join('');
 
+  const regionLocked = regionalAuth.unlocked && !adminAuth.unlocked;
+
   return `
-    <div class="panel-head"><div><h1>HQ Dashboard</h1><p>Consolidated organization-wide compliance position</p></div></div>
+    <div class="panel-head"><div><h1>HQ Dashboard</h1><p>${regionLocked ? `Consolidated compliance position for ${esc(f.region)}` : 'Consolidated organization-wide compliance position'}</p></div></div>
 
     <div class="filters-grid" style="max-width:560px;">
       <div><span class="field-label">From date</span><input type="date" id="fDateFrom" value="${f.dateFrom||''}"></div>
       <div><span class="field-label">To date</span><input type="date" id="fDateTo" value="${f.dateTo||''}"></div>
-      <div><span class="field-label">Region</span><select id="fRegion"><option value="all">All regions</option>${REGIONS.map(r=>`<option ${f.region===r?'selected':''}>${esc(r)}</option>`).join('')}</select></div>
+      <div><span class="field-label">Region</span>${regionLocked
+        ? `<div style="padding:8px 10px;font-weight:600;">${esc(f.region)}</div>`
+        : `<select id="fRegion"><option value="all">All regions</option>${REGIONS.map(r=>`<option ${f.region===r?'selected':''}>${esc(r)}</option>`).join('')}</select>`
+      }</div>
       <div style="align-self:end;"><button class="btn sm secondary" id="fClearBtn">Clear dates</button></div>
     </div>
     ${(f.dateFrom||f.dateTo) ? `<div class="locked-note" style="margin:4px 0 12px;">Showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}. Leave both blank for the full cumulative total across every day loaded.</div>` : `<div class="locked-note" style="margin:4px 0 12px;">Showing the full cumulative total across every day currently loaded. Set a From/To date above to narrow it.</div>`}
@@ -1004,7 +1053,18 @@ function renderHQView(){
 let hqFilters = {region:'all', dateFrom:'', dateTo:''};
 let clusterFilters = {dateFrom:'', dateTo:''};
 let regionalFilters = {dateFrom:'', dateTo:''};
-function getHqFilters(){ return hqFilters; }
+// Regional Manager gets the network-wide HQ layout but locked to their
+// OWN region — they can see their own cluster managers' rollup here (same
+// numbers as their dedicated Regional Insights tab), never another
+// region's. Only Admin gets the unrestricted 'all regions' + region
+// switcher. (Cluster Manager no longer reaches this screen at all — see
+// permittedTabs.)
+function getHqFilters(){
+  if(regionalAuth.unlocked && !adminAuth.unlocked){
+    return { region: regionalAuth.region, dateFrom: hqFilters.dateFrom, dateTo: hqFilters.dateTo };
+  }
+  return hqFilters;
+}
 
 /* =========================================================
    ADMIN VIEW
@@ -1025,7 +1085,11 @@ function renderAdminUploadBody(){
   const uploads = DATA.uploadLog.slice(0,15);
   const uploadRows = uploads.length ? uploads.map(u=>{
     const batchTxns = u.uploadId ? DATA.transactions.filter(t=>t.uploadId===u.uploadId) : [];
-    const canRemove = u.uploadId && batchTxns.length>0;
+    // Only removable while EVERY transaction from this batch is still
+    // Not Submitted — once anything's been submitted/reviewed, deleting it
+    // would erase an audit trail. The backend enforces this too either way.
+    const canRemove = u.uploadId && batchTxns.length>0 && batchTxns.every(t=>t.status==='Not Submitted');
+    const alreadyMoving = u.uploadId && batchTxns.length>0 && !canRemove;
     return `
     <tr>
       <td>${fmtDateTime(u.timestamp)}</td>
@@ -1035,7 +1099,9 @@ function renderAdminUploadBody(){
       <td class="num-cell">${u.duplicate}</td>
       <td class="num-cell">${u.rejected}</td>
       <td>${u.status}</td>
-      <td>${canRemove ? `<button class="btn sm danger" data-removeupload="${u.uploadId}">Remove</button>` : `<span class="locked-note">—</span>`}</td>
+      <td>${canRemove ? `<button class="btn sm danger" data-removeupload="${u.uploadId}">Remove</button>`
+          : alreadyMoving ? `<span class="locked-note" title="Some transactions from this upload have already been submitted or reviewed.">Locked</span>`
+          : `<span class="locked-note">—</span>`}</td>
     </tr>`;
   }).join('') : `<tr><td colspan="8" class="empty">No uploads yet.</td></tr>`;
 
@@ -1075,6 +1141,17 @@ function renderAdminUploadBody(){
       <div class="card-body" style="overflow-x:auto;">
         <table><thead><tr><th>Timestamp</th><th>File</th><th>Total</th><th>Imported</th><th>Duplicate</th><th>Rejected</th><th>Status</th><th>Action</th></tr></thead>
         <tbody>${uploadRows}</tbody></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Reset a Transaction</h2></div>
+      <div class="card-body">
+        <p class="locked-note" style="margin-bottom:8px;">For clearing test data only — this wipes Store Approval, Store/Cluster Remarks, Reason, review history, and sets Status back to Not Submitted for ONE transaction. The transaction row itself stays; only actions taken on it are cleared. Every reset is logged in the Audit Trail. To find a transaction, enter its Transaction No. (e.g. from the report) or the internal ID (e.g. T00042).</p>
+        <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
+          <div><span class="field-label">Transaction No. or ID</span><input type="text" id="resetTxnInput" placeholder="e.g. 100234567 or T00042" style="min-width:220px;"></div>
+          <button class="btn sm danger" id="resetTxnBtn">Find &amp; Reset</button>
+        </div>
       </div>
     </div>
   `;
@@ -1194,10 +1271,14 @@ function bindDynamicHandlers(){
     const el = document.getElementById(id);
     if(!el) return;
     el.onchange = ()=>{
+      const fRegionEl = document.getElementById('fRegion');
       hqFilters = {
         dateFrom: document.getElementById('fDateFrom').value,
         dateTo: document.getElementById('fDateTo').value,
-        region: document.getElementById('fRegion').value
+        // No #fRegion element when the region is locked (Regional Manager,
+        // non-admin) — keep whatever region is already in force instead of
+        // reading a field that doesn't exist on screen.
+        region: fRegionEl ? fRegionEl.value : hqFilters.region
       };
       render();
     };
@@ -1311,6 +1392,13 @@ function bindDynamicHandlers(){
   if(testBtn) testBtn.onclick = ()=>showToast('No backend configured — this prototype runs entirely on local persistent storage, not a live Apps Script endpoint.', 4500);
   const uploadBtn = document.getElementById('uploadBtn');
   if(uploadBtn) uploadBtn.onclick = handleUpload;
+  document.querySelectorAll('[data-removeupload]').forEach(b=>{
+    b.onclick = ()=>removeUpload(b.dataset.removeupload);
+  });
+  const resetTxnBtn = document.getElementById('resetTxnBtn');
+  const resetTxnInput = document.getElementById('resetTxnInput');
+  if(resetTxnBtn) resetTxnBtn.onclick = ()=>resetTransactionByAdmin(resetTxnInput.value);
+  if(resetTxnInput) resetTxnInput.onkeydown = (e)=>{ if(e.key==='Enter') resetTxnBtn.click(); };
 }
 
 async function persistQuiet(t){ await patchTransactions([t], []); }
