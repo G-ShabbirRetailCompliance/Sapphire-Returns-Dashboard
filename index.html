@@ -452,19 +452,61 @@ async function saveUpload(newTxns, uploadLogEntry, auditEntry){
 async function removeUpload(uploadId){
   const batchTxns = DATA.transactions.filter(t=>t.uploadId===uploadId);
   if(!batchTxns.length){ showToast('Nothing to remove — this upload has no transactions on file.'); return; }
-  const stillMoving = batchTxns.filter(t=>t.status!=='Not Submitted');
+  const dates = [...new Set(batchTxns.map(t=>t.date))].sort();
+  const dateInput = dates.length>1
+    ? prompt(`This upload spans ${dates.length} date(s): ${dates.join(', ')}.\n\nEnter one date (YYYY-MM-DD) to remove only that date, or leave blank to remove the whole upload:`, '')
+    : '';
+  if(dateInput===null) return; // cancelled
+  const date = dateInput.trim() || null;
+  if(date && !dates.includes(date)){ showToast('This upload has no transactions dated '+date+'.'); return; }
+  const scoped = date ? batchTxns.filter(t=>t.date===date) : batchTxns;
+  const stillMoving = scoped.filter(t=>t.status!=='Not Submitted');
   if(stillMoving.length){
-    showToast(stillMoving.length+' of '+batchTxns.length+' transaction(s) from this upload have already been submitted or reviewed — remove is only allowed while the whole batch is still Not Submitted.', 6000);
+    showToast(stillMoving.length+' of '+scoped.length+' transaction(s)'+(date?' dated '+date:'')+' have already been submitted or reviewed — remove is only allowed while every matched row is still Not Submitted.', 6000);
     return;
   }
-  if(!confirm(`Remove this upload? ${batchTxns.length} transaction(s) will be permanently deleted from the sheet. This cannot be undone.`)) return;
-  const result = await postAction('removeUpload', { uploadId });
+  if(!confirm(`Remove ${scoped.length} transaction(s)${date?' dated '+date:''}? This will be permanently deleted from the sheet. This cannot be undone.`)) return;
+  const result = await postAction('removeUpload', { uploadId, date });
   if(result){
-    // Drop them locally too so the screen updates without waiting on a reload.
-    DATA.transactions = DATA.transactions.filter(t=>t.uploadId!==uploadId);
+    // Drop only the matched ones locally so the screen updates without waiting on a reload.
+    const removedIds = new Set(scoped.map(t=>t.id));
+    DATA.transactions = DATA.transactions.filter(t=>!removedIds.has(t.id));
     const log = DATA.uploadLog.find(u=>u.uploadId===uploadId);
-    if(log) log.status = 'Removed';
-    showToast(`${batchTxns.length} transaction(s) removed.`);
+    const anyLeft = DATA.transactions.some(t=>t.uploadId===uploadId);
+    if(log) log.status = anyLeft ? 'Partially Removed' : 'Removed';
+    showToast(`${scoped.length} transaction(s) removed.`);
+    render();
+  }
+}
+// Override for test batches where some rows have already been
+// submitted/reviewed/signed off — normal removeUpload refuses these on
+// purpose. This bypasses that, but only with a written reason, and the
+// backend logs exactly what it deleted (ID/Txn No./Store/Status for every
+// row) into the Audit Trail BEFORE deleting, so the data isn't gone
+// without a trace even though the rows themselves are.
+async function forceRemoveUpload(uploadId){
+  const batchTxns = DATA.transactions.filter(t=>t.uploadId===uploadId);
+  if(!batchTxns.length){ showToast('Nothing to remove — this upload has no transactions on file.'); return; }
+  const dates = [...new Set(batchTxns.map(t=>t.date))].sort();
+  const dateInput = dates.length>1
+    ? prompt(`This upload spans ${dates.length} date(s): ${dates.join(', ')}.\n\nEnter one date (YYYY-MM-DD) to force-remove only that date, or leave blank to force-remove the whole upload:`, '')
+    : '';
+  if(dateInput===null) return; // cancelled
+  const date = dateInput.trim() || null;
+  if(date && !dates.includes(date)){ showToast('This upload has no transactions dated '+date+'.'); return; }
+  const scoped = date ? batchTxns.filter(t=>t.date===date) : batchTxns;
+  const reason = prompt(`Force-removing ${scoped.length} transaction(s)${date?' dated '+date:''}, some already submitted/reviewed. This bypasses the normal protection. TEST DATA ONLY.\n\nEnter a reason (required) to continue:`);
+  if(reason===null) return; // cancelled
+  if(!reason.trim()){ showToast('A reason is required to force-remove.'); return; }
+  if(!confirm(`Confirm: permanently delete ${scoped.length} transaction(s)${date?' dated '+date:''}? This cannot be undone.`)) return;
+  const result = await postAction('forceRemoveUpload', { uploadId, reason, actor:'Admin', date });
+  if(result){
+    const removedIds = new Set(scoped.map(t=>t.id));
+    DATA.transactions = DATA.transactions.filter(t=>!removedIds.has(t.id));
+    const log = DATA.uploadLog.find(u=>u.uploadId===uploadId);
+    const anyLeft = DATA.transactions.some(t=>t.uploadId===uploadId);
+    if(log) log.status = anyLeft ? 'Partially Force Removed' : 'Force Removed';
+    showToast(`${scoped.length} transaction(s) force-removed.`);
     render();
   }
 }
@@ -818,7 +860,7 @@ const STORE_SUMMARY_HEAD = `<tr><th>Store</th><th>Refund Txns</th><th>Refund Qty
 
 function renderClusterView(){
   const mgr = clusterAuth.clusterManager;
-  const stores = STORES.filter(s=>s.clusterManager===mgr);
+  const stores = STORES.filter(s=>s.clusterManager===mgr && !s.closed);
   const codes = stores.map(s=>s.code);
   const all = txnsFor(t=>codes.includes(t.storeCode));
   const f = clusterFilters;
@@ -926,7 +968,7 @@ const CLUSTER_TABLE_HEAD = `<tr><th>Cluster Manager</th><th>Stores</th><th>Refun
 
 function renderRegionalView(){
   const region = ctx.region;
-  const stores = STORES.filter(s=>s.region===region);
+  const stores = STORES.filter(s=>s.region===region && !s.closed);
   // Unassigned (closed-store placeholder) is not a real cluster manager and
   // is excluded from the summary — it would otherwise show as a phantom row.
   const mgrs = [...new Set(stores.map(s=>s.clusterManager))].filter(m=>m!=='Unassigned');
@@ -1007,9 +1049,9 @@ function renderHQView(){
   const regionsInScope = f.region==='all' ? REGIONS : [f.region];
   // Unassigned (closed-store placeholder) is not a real cluster manager and
   // is excluded from the summary — it would otherwise show as a phantom row.
-  const mgrsInScope = [...new Set(STORES.filter(s=>regionsInScope.includes(s.region)).map(s=>s.clusterManager))].filter(m=>m!=='Unassigned');
+  const mgrsInScope = [...new Set(STORES.filter(s=>regionsInScope.includes(s.region) && !s.closed).map(s=>s.clusterManager))].filter(m=>m!=='Unassigned');
   const clusterRows = mgrsInScope.map(m=>{
-    const mgrStores = STORES.filter(s=>s.clusterManager===m);
+    const mgrStores = STORES.filter(s=>s.clusterManager===m && !s.closed);
     const codes = mgrStores.map(s=>s.code);
     const ts = filtered.filter(t=>codes.includes(t.storeCode));
     return clusterKpiRow(m, mgrStores, ts);
@@ -1100,7 +1142,7 @@ function renderAdminUploadBody(){
       <td class="num-cell">${u.rejected}</td>
       <td>${u.status}</td>
       <td>${canRemove ? `<button class="btn sm danger" data-removeupload="${u.uploadId}">Remove</button>`
-          : alreadyMoving ? `<span class="locked-note" title="Some transactions from this upload have already been submitted or reviewed.">Locked</span>`
+          : alreadyMoving ? `<button class="btn sm danger" data-forceremoveupload="${u.uploadId}" title="Overrides the submitted/reviewed protection — for test data only">Force Remove</button>`
           : `<span class="locked-note">—</span>`}</td>
     </tr>`;
   }).join('') : `<tr><td colspan="8" class="empty">No uploads yet.</td></tr>`;
@@ -1394,6 +1436,9 @@ function bindDynamicHandlers(){
   if(uploadBtn) uploadBtn.onclick = handleUpload;
   document.querySelectorAll('[data-removeupload]').forEach(b=>{
     b.onclick = ()=>removeUpload(b.dataset.removeupload);
+  });
+  document.querySelectorAll('[data-forceremoveupload]').forEach(b=>{
+    b.onclick = ()=>forceRemoveUpload(b.dataset.forceremoveupload);
   });
   const resetTxnBtn = document.getElementById('resetTxnBtn');
   const resetTxnInput = document.getElementById('resetTxnInput');
