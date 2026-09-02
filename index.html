@@ -522,7 +522,7 @@ const NAV_ITEMS = [
 function permittedTabs(){
   if(adminAuth.unlocked) return ['hq','store','cluster','regional','admin'];
   if(storeAuth.unlocked) return ['store'];
-  if(clusterAuth.unlocked) return ['hq','cluster'];
+  if(clusterAuth.unlocked) return ['cluster']; // no HQ Dashboard — Cluster Manager is scoped to their own cluster only
   if(regionalAuth.unlocked) return ['hq','regional'];
   return [];
 }
@@ -748,6 +748,30 @@ function reasonCell(t, editable){
 /* =========================================================
    CLUSTER MANAGER VIEW
    ========================================================= */
+// Shared by both Cluster Review (own cluster's stores) and Regional
+// Manager Insights (every store in the region) — same columns, same
+// per-store numbers, purely informational either way (no action inputs
+// live in this table in either view).
+function storeSummaryRows(stores, txns){
+  return stores.map(s=>{
+    const ts = txns.filter(t=>t.storeCode===s.code);
+    const c = st => ts.filter(t=>t.status===st).length;
+    const cat = code => { const g = ts.filter(t=>t.category===code); return {count:g.length, qty:g.reduce((s,t)=>s+t.qty,0), amt:g.reduce((s,t)=>s+t.amount,0)}; };
+    const refund=cat('refund'), over30=cat('over30'), fullprice=cat('fullprice');
+    return `<tr>
+      <td>${esc(s.name)}</td>
+      <td class="num-cell">${refund.count}</td><td class="num-cell">${refund.qty}</td><td class="num-cell">${money(refund.amt)}</td>
+      <td class="num-cell">${over30.count}</td><td class="num-cell">${over30.qty}</td><td class="num-cell">${money(over30.amt)}</td>
+      <td class="num-cell">${fullprice.count}</td><td class="num-cell">${fullprice.qty}</td><td class="num-cell">${money(fullprice.amt)}</td>
+      <td class="num-cell">${c('Signed Off')}</td>
+      <td class="num-cell">${c('Awaiting Review')}</td>
+      <td class="num-cell">${c('Re-Review')}</td>
+      <td class="num-cell">${c('Not Submitted')}</td>
+    </tr>`;
+  }).join('');
+}
+const STORE_SUMMARY_HEAD = `<tr><th>Store</th><th>Refund Txns</th><th>Refund Qty</th><th>Refund Value</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Qty</th><th>Return&gt;30 Value</th><th>Full Price Txns</th><th>Full Price Qty</th><th>Full Price Value</th><th>Signed Off</th><th>Awaiting</th><th>Re-Review</th><th>Not Submitted</th></tr>`;
+
 function renderClusterView(){
   const mgr = clusterAuth.clusterManager;
   const stores = STORES.filter(s=>s.clusterManager===mgr);
@@ -764,25 +788,7 @@ function renderClusterView(){
     return true;
   });
 
-  const summaryRows = stores.map(s=>{
-    const ts = summaryScope.filter(t=>t.storeCode===s.code);
-    const c = st => ts.filter(t=>t.status===st).length;
-    // Per-category performance — distinct transaction count, summed Return
-    // Qty, and summed compliance Value — same category stats used in the
-    // Cluster/Regional/HQ KPI rows (clusterKpiRow), just scoped to one store.
-    const cat = code => { const g = ts.filter(t=>t.category===code); return {count:g.length, qty:g.reduce((s,t)=>s+t.qty,0), amt:g.reduce((s,t)=>s+t.amount,0)}; };
-    const refund=cat('refund'), over30=cat('over30'), fullprice=cat('fullprice');
-    return `<tr>
-      <td>${esc(s.name)}</td>
-      <td class="num-cell">${refund.count}</td><td class="num-cell">${refund.qty}</td><td class="num-cell">${money(refund.amt)}</td>
-      <td class="num-cell">${over30.count}</td><td class="num-cell">${over30.qty}</td><td class="num-cell">${money(over30.amt)}</td>
-      <td class="num-cell">${fullprice.count}</td><td class="num-cell">${fullprice.qty}</td><td class="num-cell">${money(fullprice.amt)}</td>
-      <td class="num-cell">${c('Signed Off')}</td>
-      <td class="num-cell">${c('Awaiting Review')}</td>
-      <td class="num-cell">${c('Re-Review')}</td>
-      <td class="num-cell">${c('Not Submitted')}</td>
-    </tr>`;
-  }).join('');
+  const summaryRows = storeSummaryRows(stores, summaryScope);
 
   const queue = all.filter(t=>t.status==='Awaiting Review').sort((a,b)=>a.date<b.date?1:-1);
   const queueLines = flattenToLines(queue);
@@ -835,7 +841,7 @@ function renderClusterView(){
     <div class="card">
       <div class="card-head"><h2>Store Summary</h2></div>
       <div class="card-body" style="overflow-x:auto;">
-        <table class="compact-table"><thead><tr><th>Store</th><th>Refund Txns</th><th>Refund Qty</th><th>Refund Value</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Qty</th><th>Return&gt;30 Value</th><th>Full Price Txns</th><th>Full Price Qty</th><th>Full Price Value</th><th>Signed Off</th><th>Awaiting</th><th>Re-Review</th><th>Not Submitted</th></tr></thead>
+        <table class="compact-table"><thead>${STORE_SUMMARY_HEAD}</thead>
         <tbody>${summaryRows}</tbody></table>
       </div>
     </div>
@@ -882,17 +888,27 @@ function renderRegionalView(){
   const mgrs = [...new Set(stores.map(s=>s.clusterManager))].filter(m=>m!=='Unassigned');
   const f = regionalFilters;
 
+  // Same date-range scoping as Cluster Review's Store Summary — applies to
+  // BOTH the Cluster Manager rollup and the store-level breakdown below.
+  const regionScope = txnsFor(t=>{
+    const store = storeByCode(t.storeCode);
+    if(store.region!==region) return false;
+    if(f.dateFrom && t.date<f.dateFrom) return false;
+    if(f.dateTo && t.date>f.dateTo) return false;
+    return true;
+  });
+
   const rows = mgrs.map(m=>{
     const mgrStores = stores.filter(s=>s.clusterManager===m);
     const codes = mgrStores.map(s=>s.code);
-    const ts = txnsFor(t=>{
-      if(!codes.includes(t.storeCode)) return false;
-      if(f.dateFrom && t.date<f.dateFrom) return false;
-      if(f.dateTo && t.date>f.dateTo) return false;
-      return true;
-    });
+    const ts = regionScope.filter(t=>codes.includes(t.storeCode));
     return clusterKpiRow(m, mgrStores, ts);
   }).join('');
+
+  // Store-level breakdown, view/reporting only — Regional Manager gets no
+  // approve/sign-off controls here, same as the Cluster Manager Summary
+  // above it; only Store and Cluster roles can act on a transaction.
+  const storeRows = storeSummaryRows(stores, regionScope);
 
   return `
     <div class="session-bar"><span>Signed in for <b>${esc(region)}</b></span><a id="regionalLockBtn">Lock / switch region</a></div>
@@ -913,6 +929,12 @@ function renderRegionalView(){
       <div class="card-head"><h2>Cluster Manager Summary — ${esc(region)}</h2></div>
       <div class="card-body" style="overflow-x:auto;">
         <table class="compact-table"><thead>${CLUSTER_TABLE_HEAD}</thead><tbody>${rows}</tbody></table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Store Summary — ${esc(region)}</h2><span class="count">Review only — no approvals or sign-offs here</span></div>
+      <div class="card-body" style="overflow-x:auto;">
+        <table class="compact-table"><thead>${STORE_SUMMARY_HEAD}</thead><tbody>${storeRows}</tbody></table>
       </div>
     </div>
   `;
