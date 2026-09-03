@@ -582,7 +582,16 @@ function badge(status){
   const map={'Not Submitted':'st-not','Awaiting Review':'st-await','Re-Review':'st-rereview','Signed Off':'st-signed'};
   return `<span class="badge ${map[status]||'st-not'}">${esc(status)}</span>`;
 }
-function txnsFor(filterFn){ return DATA.transactions.filter(filterFn); }
+// Refund transactions of Rs 500 or less are kept on the Sheet (nothing is
+// ever deleted or skipped at import) but hidden from every compliance
+// view and count — Store Entry, Cluster Review, Regional Insights, and
+// HQ Dashboard. This is the single place that rule lives; txnsFor() and
+// the HQ view's own filter both route through it, so there's nowhere
+// left that shows these except a direct read of the raw Sheet data.
+function isHiddenLowValueRefund(t){
+  return t.category==='refund' && t.amount<=500;
+}
+function txnsFor(filterFn){ return DATA.transactions.filter(t=>!isHiddenLowValueRefund(t) && filterFn(t)); }
 function showToast(msg, ms=3200){
   const t=document.getElementById('toast');
   t.textContent=msg; t.classList.remove('hide');
@@ -1032,6 +1041,7 @@ function renderRegionalView(){
 function renderHQView(){
   const f = getHqFilters();
   const filtered = DATA.transactions.filter(t=>{
+    if(isHiddenLowValueRefund(t)) return false;
     const store = storeByCode(t.storeCode);
     if(f.region!=='all' && store.region!==f.region) return false;
     if(f.dateFrom && t.date<f.dateFrom) return false;
