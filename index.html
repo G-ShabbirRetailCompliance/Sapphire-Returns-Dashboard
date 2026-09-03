@@ -778,7 +778,14 @@ function flattenToLines(rows){
 }
 
 function renderStoreCategoryTable(cat, rows, store){
-  const cols = ['Return Date','Time','Transaction No.','Barcode','Return Qty','Return Amount','Payment Method']
+  // Refund Amount is the money actually leaked to the customer (Return
+  // Value minus Sold Value — see the import-time comment where
+  // complianceAmount is computed) and only differs from raw Return Amount
+  // for the Refund bucket, so it's only shown as its own column there —
+  // Over 30 / Full Price already use a raw value for both.
+  const cols = ['Return Date','Time','Transaction No.','Barcode','Return Qty','Return Amount']
+    .concat(cat==='refund' ? ['Refund Amount'] : [])
+    .concat(['Payment Method'])
     .concat(cat==='over30' ? ['Aging (days)'] : [])
     .concat(['Price Type','Original Transaction','Is Approved by Manager','Reason for Return','Store Remarks','Status','Cluster Review','Cluster Manager Review 2']);
 
@@ -795,6 +802,7 @@ function renderStoreCategoryTable(cat, rows, store){
       <td class="mono">${esc(b.barcode)}</td>
       <td class="num-cell">${b.qty}</td>
       <td class="num-cell">${money(b.amount!=null?b.amount:t.amount)}</td>
+      ${cat==='refund' ? `<td class="num-cell">${idx!==0?'':money(t.amount)}</td>` : ''}
       <td>${esc(t.paymentMethod||'—')}</td>
       ${cat==='over30' ? `<td class="num-cell">${t.agingDays==null?'—':t.agingDays}</td>` : ''}
       <td>${esc(priceTypeLine)}</td>
@@ -887,7 +895,7 @@ function renderClusterView(){
 
   const queue = all.filter(t=>t.status==='Awaiting Review').sort((a,b)=>a.date<b.date?1:-1);
   const queueLines = flattenToLines(queue);
-  const QUEUE_COLS = 17;
+  const QUEUE_COLS = 18;
 
   const queueRows = queueLines.length ? queueLines.map(({t,b,idx})=>{
     const store = storeByCode(t.storeCode);
@@ -900,6 +908,7 @@ function renderClusterView(){
       <td class="mono">${esc(b.barcode)}</td>
       <td class="num-cell">${b.qty}</td>
       <td class="num-cell">${money(b.amount!=null?b.amount:t.amount)}</td>
+      <td class="num-cell">${(idx!==0||t.category!=='refund')?'—':money(t.amount)}</td>
       <td>${esc(t.paymentMethod||'—')}</td>
       <td>${esc(priceTypeLine)}</td>
       <td class="mono">${esc(t.origTransaction||'—')}</td>
@@ -943,7 +952,7 @@ function renderClusterView(){
     <div class="card">
       <div class="card-head"><h2>Review Queue</h2><span class="count">${queue.length} awaiting</span></div>
       <div class="card-body" style="overflow-x:auto;">
-        <table><thead><tr><th>Store</th><th>Return Date</th><th>Time</th><th>Transaction No.</th><th>Barcode</th><th>Return Qty</th><th>Return Amount</th><th>Payment Method</th><th>Price Type</th><th>Original Transaction</th><th>Reason for Return</th><th>Store Remarks</th><th>Status</th><th>Cluster Review</th><th>Cluster Manager Review 2</th><th>Cluster Remarks (this round)</th><th>Action</th></tr></thead>
+        <table><thead><tr><th>Store</th><th>Return Date</th><th>Time</th><th>Transaction No.</th><th>Barcode</th><th>Return Qty</th><th>Return Amount</th><th>Refund Amount</th><th>Payment Method</th><th>Price Type</th><th>Original Transaction</th><th>Reason for Return</th><th>Store Remarks</th><th>Status</th><th>Cluster Review</th><th>Cluster Manager Review 2</th><th>Cluster Remarks (this round)</th><th>Action</th></tr></thead>
         <tbody>${queueRows}</tbody></table>
       </div>
     </div>
