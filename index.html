@@ -875,11 +875,122 @@ function storeSummaryRows(stores, txns){
 }
 const STORE_SUMMARY_HEAD = `<tr><th>Store</th><th>Refund Txns</th><th>Refund Qty</th><th>Refund Value</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Qty</th><th>Return&gt;30 Value</th><th>Full Price Txns</th><th>Full Price Qty</th><th>Full Price Value</th><th>Signed Off</th><th>Awaiting</th><th>Re-Review</th><th>Not Submitted</th></tr>`;
 
+/* =========================================================
+   RETURN REASONS ANALYSIS — shared by HQ, Cluster Review, and
+   Regional Insights. Counts EVERY transaction in scope regardless of
+   submission status (a separate "Not submitted by store" number is
+   shown alongside so a still-pending count doesn't get mistaken for a
+   finalized one) and, same as everywhere else, never shows a refund of
+   Rs 500 or less (see isHiddenLowValueRefund / txnsFor).
+   ========================================================= */
+// Best-effort keyword classifier for "Other" reason free-text remarks —
+// not a real NLP model, just first-match keyword buckets. Expect to
+// refine these once real "Other" remarks come in; anything that matches
+// nothing lands in "Uncategorized", not silently dropped.
+const OTHER_REASON_BUCKETS = [
+  { label:'Wrong item received', keywords:['wrong item','different item','not what i ordered','item mismatch','wrong color','wrong colour'] },
+  { label:'Changed mind / no longer needed', keywords:['changed mind','no longer need',"don't want",'dont want','not needed','not required'] },
+  { label:'Duplicate order / double charge', keywords:['duplicate','double charge','charged twice','ordered twice','billed twice'] },
+  { label:'Late delivery', keywords:['late','delay','took too long','delivery time'] },
+  { label:'Price or discount dispute', keywords:['price','discount','overcharge','cheaper','sale price','promo'] },
+  { label:'Gift return', keywords:['gift','present'] },
+  { label:'Packaging / transit damage', keywords:['transit','shipping damage','box damaged','packaging'] },
+  { label:'Fraud / suspected misuse', keywords:['fraud','misuse','fake','suspicious','counterfeit'] },
+];
+function classifyOtherRemark(text){
+  const t = (text||'').trim();
+  if(!t) return 'No remarks given';
+  const lower = t.toLowerCase();
+  for(const bucket of OTHER_REASON_BUCKETS){
+    if(bucket.keywords.some(k=>lower.includes(k))) return bucket.label;
+  }
+  return 'Uncategorized';
+}
+function renderReasonsCard(scopeTxns, scopeLabel){
+  const visible = scopeTxns.filter(t=>!isHiddenLowValueRefund(t));
+  const notSubmitted = visible.filter(t=>t.status==='Not Submitted').length;
+  const counts = {};
+  visible.forEach(t=>{
+    const r = t.reason && t.reason.trim() ? t.reason : 'Not set yet';
+    counts[r] = counts[r] || {count:0, qty:0, amt:0};
+    counts[r].count++; counts[r].qty += t.qty; counts[r].amt += t.amount;
+  });
+  const total = visible.length;
+  const maxCount = Math.max(1, ...Object.values(counts).map(c=>c.count));
+  const rows = Object.entries(counts).sort((a,b)=>b[1].count-a[1].count).map(([reason,c])=>{
+    const pct = total ? Math.round(c.count/total*100) : 0;
+    const barPct = Math.round(c.count/maxCount*100);
+    const isOther = reason==='Other';
+    return `<tr ${isOther?'data-reason-toggle="other" style="cursor:pointer;"':''}>
+      <td>${esc(reason)}${isOther?' <span class="locked-note">(click to see remarks)</span>':''}</td>
+      <td class="num-cell">${c.count}</td>
+      <td class="num-cell">${c.qty}</td>
+      <td class="num-cell">${money(c.amt)}</td>
+      <td class="num-cell">${pct}%</td>
+      <td style="min-width:100px;"><div style="background:var(--bg-accent,#dbe7fb);height:10px;border-radius:4px;width:${barPct}%;min-width:2px;"></div></td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="6" class="empty">No transactions in this scope.</td></tr>`;
+
+  const otherByClass = {};
+  visible.filter(t=>t.reason==='Other').forEach(t=>{
+    const cls = classifyOtherRemark(t.reasonRemarks);
+    (otherByClass[cls] = otherByClass[cls]||[]).push(t);
+  });
+  const otherRows = Object.entries(otherByClass).sort((a,b)=>b[1].length-a[1].length).map(([cls,list])=>`
+    <tr>
+      <td>${esc(cls)}</td>
+      <td class="num-cell">${list.length}</td>
+      <td>${list.slice(0,5).map(t=>esc(t.transactionNumber+' ('+t.storeCode+'): '+(t.reasonRemarks||'—'))).join('<br>')}${list.length>5?`<br><span class="locked-note">+${list.length-5} more</span>`:''}</td>
+    </tr>`).join('') || `<tr><td colspan="3" class="empty">No "Other" transactions in this scope.</td></tr>`;
+
+  return `
+    <div class="card">
+      <div class="card-head"><h2>Return Reasons — ${esc(scopeLabel)}</h2></div>
+      <div class="card-body">
+        <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px;">
+          <div><span class="field-label">Total transactions</span><div style="font-size:20px;font-weight:600;">${total}</div></div>
+          <div><span class="field-label">Not submitted by store</span><div style="font-size:20px;font-weight:600;">${notSubmitted}</div></div>
+        </div>
+        <table class="compact-table"><thead><tr><th>Reason</th><th>Txns</th><th>Qty</th><th>Value</th><th>% of total</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table>
+        <div id="otherRemarksTable" style="display:none;margin-top:16px;">
+          <h3 style="font-size:14px;margin:0 0 6px;">"Other" remarks — classified</h3>
+          <table class="compact-table"><thead><tr><th>Classification</th><th>Count</th><th>Sample remarks</th></tr></thead>
+          <tbody>${otherRows}</tbody></table>
+        </div>
+      </div>
+    </div>`;
+}
+
+// Oversight-only view of what's being excluded from every compliance
+// screen by the ≤Rs 500 refund rule — nothing here is deleted, all of it
+// stays on the Google Sheet; this card just makes sure Admin/oversight
+// can still see what's not being counted anywhere else, by name.
+function renderBelowThresholdCard(rawScopeTxns, scopeLabel){
+  const hidden = rawScopeTxns.filter(isHiddenLowValueRefund);
+  const count = hidden.length;
+  const qty = hidden.reduce((s,t)=>s+t.qty,0);
+  const amt = hidden.reduce((s,t)=>s+t.amount,0);
+  return `
+    <div class="card">
+      <div class="card-head"><h2>Refund Transactions ≤Rs 500 — Below Review Threshold</h2></div>
+      <div class="card-body">
+        <p class="locked-note" style="margin-bottom:10px;">Excluded from Store Entry, Cluster Review, Regional Insights and the HQ Dashboard's KPIs and counts — kept on the Sheet, just not reviewed. Scope: ${esc(scopeLabel)}.</p>
+        <div style="display:flex;gap:24px;flex-wrap:wrap;">
+          <div><span class="field-label">Transaction count</span><div style="font-size:20px;font-weight:600;">${count}</div></div>
+          <div><span class="field-label">Total quantity</span><div style="font-size:20px;font-weight:600;">${qty}</div></div>
+          <div><span class="field-label">Total value</span><div style="font-size:20px;font-weight:600;">${money(amt)}</div></div>
+        </div>
+      </div>
+    </div>`;
+}
+
 function renderClusterView(){
   const mgr = clusterAuth.clusterManager;
   const stores = STORES.filter(s=>s.clusterManager===mgr && !s.closed);
   const codes = stores.map(s=>s.code);
   const all = txnsFor(t=>codes.includes(t.storeCode));
+  const allRaw = DATA.transactions.filter(t=>codes.includes(t.storeCode)); // includes hidden ≤500 refunds, for the Below Threshold card only
   const f = clusterFilters;
   // Date range applies to the Store Summary counts (historical reporting)
   // only — the Review Queue below always shows every pending item
@@ -956,6 +1067,8 @@ function renderClusterView(){
         <tbody>${queueRows}</tbody></table>
       </div>
     </div>
+    ${renderReasonsCard(all, mgr)}
+    ${renderBelowThresholdCard(allRaw, mgr)}
   `;
 }
 
@@ -995,6 +1108,14 @@ function renderRegionalView(){
   // Same date-range scoping as Cluster Review's Store Summary — applies to
   // BOTH the Cluster Manager rollup and the store-level breakdown below.
   const regionScope = txnsFor(t=>{
+    const store = storeByCode(t.storeCode);
+    if(store.region!==region) return false;
+    if(f.dateFrom && t.date<f.dateFrom) return false;
+    if(f.dateTo && t.date>f.dateTo) return false;
+    return true;
+  });
+  // Same scope as regionScope but including hidden ≤500 refunds — for the Below Threshold card only.
+  const regionScopeRaw = DATA.transactions.filter(t=>{
     const store = storeByCode(t.storeCode);
     if(store.region!==region) return false;
     if(f.dateFrom && t.date<f.dateFrom) return false;
@@ -1041,6 +1162,8 @@ function renderRegionalView(){
         <table class="compact-table"><thead>${STORE_SUMMARY_HEAD}</thead><tbody>${storeRows}</tbody></table>
       </div>
     </div>
+    ${renderReasonsCard(regionScope, region)}
+    ${renderBelowThresholdCard(regionScopeRaw, region)}
   `;
 }
 
@@ -1051,6 +1174,14 @@ function renderHQView(){
   const f = getHqFilters();
   const filtered = DATA.transactions.filter(t=>{
     if(isHiddenLowValueRefund(t)) return false;
+    const store = storeByCode(t.storeCode);
+    if(f.region!=='all' && store.region!==f.region) return false;
+    if(f.dateFrom && t.date<f.dateFrom) return false;
+    if(f.dateTo && t.date>f.dateTo) return false;
+    return true;
+  });
+  // Same scope as filtered but including hidden ≤500 refunds — for the Below Threshold card only.
+  const filteredRaw = DATA.transactions.filter(t=>{
     const store = storeByCode(t.storeCode);
     if(f.region!=='all' && store.region!==f.region) return false;
     if(f.dateFrom && t.date<f.dateFrom) return false;
@@ -1109,6 +1240,8 @@ function renderHQView(){
         <table class="compact-table"><thead>${CLUSTER_TABLE_HEAD}</thead><tbody>${clusterRows}</tbody></table>
       </div>
     </div>
+    ${renderReasonsCard(filtered, regionLocked ? f.region : 'All Regions')}
+    ${renderBelowThresholdCard(filteredRaw, regionLocked ? f.region : 'All Regions')}
   `;
 }
 let hqFilters = {region:'all', dateFrom:'', dateTo:''};
@@ -1142,6 +1275,37 @@ function renderAdminView(){
   `;
 }
 
+// Network-wide, all-time category totals — same numbers/definitions as
+// the HQ Dashboard's KPI row (refund/over30/fullprice counts, qty, value,
+// plus the three status buckets), but with no region/date scoping, since
+// Admin's job here is to see the complete picture regardless of filters
+// anyone else has set on their own screen.
+function renderCategorySummaryCard(txns, scopeLabel){
+  const visible = txns.filter(t=>!isHiddenLowValueRefund(t));
+  const bucket = b => visible.filter(t=>statusBucket(t.status)===b).length;
+  const catKpi = cat=>{
+    const ts = visible.filter(t=>t.category===cat);
+    return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)};
+  };
+  const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice');
+  return `
+    <div class="card">
+      <div class="card-head"><h2>Category-wise Summary</h2><span class="count">${esc(scopeLabel)}</span></div>
+      <div class="card-body">
+        <div class="grid kpi-status">
+          <div class="kpi"><div class="num">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
+          <div class="kpi"><div class="num">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
+          <div class="kpi"><div class="num">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
+        </div>
+        <div class="grid kpis" style="grid-template-columns:repeat(3,1fr);">
+          <div class="kpi accent"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
+          <div class="kpi accent"><div class="num">${over30.count}</div><div class="lbl">Return &gt;30 Days Transactions · Qty ${over30.qty} · ${money(over30.amt)}</div></div>
+          <div class="kpi accent"><div class="num">${fullprice.count}</div><div class="lbl">Full Price Sale Return Transactions · Qty ${fullprice.qty} · ${money(fullprice.amt)}</div></div>
+        </div>
+      </div>
+    </div>`;
+}
+
 function renderAdminUploadBody(){
   const uploads = DATA.uploadLog.slice(0,15);
   const uploadRows = uploads.length ? uploads.map(u=>{
@@ -1167,6 +1331,9 @@ function renderAdminUploadBody(){
   }).join('') : `<tr><td colspan="8" class="empty">No uploads yet.</td></tr>`;
 
   return `
+    ${renderCategorySummaryCard(DATA.transactions, 'All stores, all dates')}
+    ${renderReasonsCard(DATA.transactions, 'All stores, all dates')}
+    ${renderBelowThresholdCard(DATA.transactions, 'All stores, all dates')}
     <div class="note-box">Live and backed by your Google Sheet via the Apps Script Web App — every save here writes to the DataStore tab, and every load reads from it. This is not a local-only prototype.</div>
 
     <div class="grid" style="grid-template-columns:1fr 1fr;">
@@ -1458,6 +1625,12 @@ function bindDynamicHandlers(){
   });
   document.querySelectorAll('[data-forceremoveupload]').forEach(b=>{
     b.onclick = ()=>forceRemoveUpload(b.dataset.forceremoveupload);
+  });
+  document.querySelectorAll('[data-reason-toggle]').forEach(el=>{
+    el.onclick = ()=>{
+      const panel = document.getElementById('otherRemarksTable');
+      if(panel) panel.style.display = panel.style.display==='none' ? 'block' : 'none';
+    };
   });
   const resetTxnBtn = document.getElementById('resetTxnBtn');
   const resetTxnInput = document.getElementById('resetTxnInput');
