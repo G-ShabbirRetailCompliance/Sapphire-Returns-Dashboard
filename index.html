@@ -89,6 +89,7 @@
   .badge.st-await{background:var(--amber-bg);color:var(--amber);}
   .badge.st-rereview{background:var(--red-bg);color:var(--red);}
   .badge.st-signed{background:var(--green-bg);color:var(--green);}
+  .badge.st-noaction{background:var(--grey-bg);color:var(--grey);font-style:italic;}
 
   .btn{display:inline-flex;align-items:center;gap:6px;background:var(--teal-600);color:#fff;border:none;border-radius:5px;padding:7px 13px;font-size:12.5px;font-weight:600;cursor:pointer;}
   .btn:hover{background:var(--teal-500);}
@@ -239,8 +240,23 @@ const REGIONS = [...new Set(STORES.map(s=>s.region))];
 // 'fullprice' replaces the former 'creditmemo' compliance bucket at store/cluster
 // workflow level — Full Price Sale Return transactions are now tracked instead of
 // plain Credit Memo settlements (see import classification below).
-const CATEGORY_LABEL = {refund:'Refund Transactions', over30:'Returns Over 30 Days', fullprice:'Full Price Sale Return Transactions'};
+const CATEGORY_LABEL = {refund:'Refund Transactions', over30:'Returns Over 30 Days', fullprice:'Full Price Sale Return Transactions', discounted:'Discounted Sale Return Transactions'};
 const REASON_OPTIONS = ['Missing Component','Damage Product','Size Issue','Incorrect Charging','Quality Issue','Wrong product punched','Double bill punched','Other'];
+
+// Sale Days windows — during one of these date ranges, a FULL PRICE return
+// is the compliance anomaly (everything sold was on discount, so a return
+// priced at full price is suspicious) and gets flagged as 'fullprice'.
+// OUTSIDE every window, the anomaly flips: a DISCOUNTED return is
+// suspicious (no promotion is running) and gets flagged as 'discounted'
+// instead. Both categories are ALWAYS shown in every KPI/summary card
+// regardless of window — see needsReview at import time — only WHICH one
+// requires a store remark + cluster sign-off changes.
+// The actual list lives on the Sheet (SaleWindows tab) and is managed
+// from Admin → Sale Days, not edited here — DATA.saleWindows is loaded
+// fresh on every refresh, same as transactions/auditLog/uploadLog.
+function isInSaleWindow(dateStr){
+  return (DATA.saleWindows||[]).some(w => dateStr>=w.start && dateStr<=w.end);
+}
 const STATUS_LIST = ['Not Submitted','Awaiting Review','Re-Review','Signed Off'];
 const STORAGE_KEY = 'sapphire-returns-dashboard-v1';
 
@@ -274,7 +290,7 @@ function baseTxn(t){
   const submitted = t.status !== 'Not Submitted';
   return {
     id: t.id,
-    category: t.category,            // 'over30' | 'refund' | 'fullprice'
+    category: t.category,            // 'over30' | 'refund' | 'fullprice' | 'discounted'
     storeCode: t.storeCode,
     transactionNumber: t.transactionNumber,  // the report's distinct Transaction key
     itemCount: t.itemCount,          // number of line items under this transaction
@@ -313,7 +329,7 @@ function baseTxn(t){
 /* =========================================================
    STATE
    ========================================================= */
-let DATA = { transactions: [], auditLog: [], uploadLog: [], lastUploadTs: null };
+let DATA = { transactions: [], auditLog: [], uploadLog: [], saleWindows: [], lastUploadTs: null };
 let screen = 'hq'; // hq | store | cluster | regional | admin
 const OPEN_STORES = STORES.filter(s=>!s.closed);
 let storeAuth = { unlocked:false, storeCode: OPEN_STORES[0].code, password:'' };
@@ -324,7 +340,13 @@ let adminAuth = { unlocked:false };
 let adminSubView = 'upload'; // upload | audit
 let ctx = { region: REGIONS[0] };
 let editingActive = false;
-function statusBucket(status){ return status==='Signed Off' ? 'Signed Off' : status==='Not Submitted' ? 'Not Started' : 'Open Items'; }
+// 'No Action Needed' is its own bucket, explicitly — WITHOUT this case it
+// would silently fall into 'Open Items' below and inflate that count with
+// transactions nobody is waiting on. Not counted in any of the three KPI
+// boxes (Signed Off / Not Started / Open Items) on purpose: it's neither
+// pending work nor a completed review, so it sits outside that tally
+// entirely rather than being force-fit into one of the three.
+function statusBucket(status){ return status==='Signed Off' ? 'Signed Off' : status==='Not Submitted' ? 'Not Started' : status==='No Action Needed' ? 'No Action Needed' : 'Open Items'; }
 let lastLoadedTs = null;
 const REFRESH_INTERVAL_SECONDS = 60; // 1 minute, per request
 let nextRefreshIn = REFRESH_INTERVAL_SECONDS;
@@ -356,12 +378,14 @@ async function loadData(){
   // handler below for why a failed refresh must NOT reach this path.
   return { transactions: makeSeedTransactions(), auditLog: [
     {timestamp:new Date().toISOString(), user:'System', role:'System', action:'Backend unreachable — showing empty local state', transaction:'—', prevStatus:'—', newStatus:'—', remarks:''}
-  ], uploadLog: [], lastUploadTs: null };
+  ], uploadLog: [], saleWindows: [
+    { id:'SW00001', start:'2026-09-02', end:'2026-09-06', note:'September 2026 Sale Days (offline fallback default)', addedBy:'System', addedOn:new Date().toISOString() }
+  ], lastUploadTs: null };
 }
 // Server-side login: password ONLY. The backend scans the Credentials
-// sheet for a row matching this password and tells us which role +
-// identifier it belongs to — the client never says "check me as store
-// S2001AIT", because before this call the client doesn't know who it is.
+// sheet for EVERY row matching this password — a person can legitimately
+// hold more than one role under one code (Regional Manager who is also
+// Cluster Manager of their own cluster) — and tells us all of them.
 async function verifyPasswordLogin(password){
   try{
     const res = await fetch(APPS_SCRIPT_URL, {
@@ -370,7 +394,7 @@ async function verifyPasswordLogin(password){
       body: JSON.stringify({ action:'loginByPassword', secret: SHARED_SECRET, password })
     });
     const json = await res.json();
-    if(json && json.ok) return { role: json.role, identifier: json.identifier };
+    if(json && json.ok && json.matches && json.matches.length) return json.matches;
     return null;
   }catch(e){
     showToast('Could not reach the backend to verify login. ('+(e.message||e)+')', 6000);
@@ -484,8 +508,7 @@ async function removeUpload(uploadId){
 // backend logs exactly what it deleted (ID/Txn No./Store/Status for every
 // row) into the Audit Trail BEFORE deleting, so the data isn't gone
 // without a trace even though the rows themselves are.
-async function forceRemoveUpload(uploadId){
-  const batchTxns = DATA.transactions.filter(t=>t.uploadId===uploadId);
+async function forceRemoveUpload(uploadId){  const batchTxns = DATA.transactions.filter(t=>t.uploadId===uploadId);
   if(!batchTxns.length){ showToast('Nothing to remove — this upload has no transactions on file.'); return; }
   const dates = [...new Set(batchTxns.map(t=>t.date))].sort();
   const dateInput = dates.length>1
@@ -507,6 +530,33 @@ async function forceRemoveUpload(uploadId){
     const anyLeft = DATA.transactions.some(t=>t.uploadId===uploadId);
     if(log) log.status = anyLeft ? 'Partially Force Removed' : 'Force Removed';
     showToast(`${scoped.length} transaction(s) force-removed.`);
+    render();
+  }
+}
+async function addSaleWindowRemote(start, end, note){
+  if(!start || !end){ showToast('Both a start and end date are required.'); return; }
+  if(end<start){ showToast('End date is before start date.'); return; }
+  const overlap = (DATA.saleWindows||[]).some(w => !(end<w.start || start>w.end));
+  if(overlap && !confirm('This overlaps an existing sale window. Add it anyway?')) return;
+  const result = await postAction('addSaleWindow', { start, end, note, addedBy:'Admin' });
+  if(result){
+    // Re-pull from server rather than guessing the new ID locally — this
+    // table is small and rarely changed, so the extra round trip is cheap
+    // and guarantees the ID shown matches what's actually on the Sheet.
+    const fresh = await fetchDataFromBackend();
+    if(fresh) DATA.saleWindows = fresh.saleWindows;
+    showToast('Sale window added.');
+    render();
+  }
+}
+async function deleteSaleWindowRemote(id){
+  const w = (DATA.saleWindows||[]).find(x=>x.id===id);
+  if(!w){ showToast('Sale window not found.'); return; }
+  if(!confirm(`Remove the sale window ${w.start} to ${w.end}${w.note?' ('+w.note+')':''}? Transactions already imported under it keep their existing category — this only affects future uploads.`)) return;
+  const result = await postAction('deleteSaleWindow', { id });
+  if(result){
+    DATA.saleWindows = (DATA.saleWindows||[]).filter(x=>x.id!==id);
+    showToast('Sale window removed.');
     render();
   }
 }
@@ -579,7 +629,7 @@ function fmtBarcodes(list){
   return `<span class="mono">${shown.join(', ')}</span>${extra}`;
 }
 function badge(status){
-  const map={'Not Submitted':'st-not','Awaiting Review':'st-await','Re-Review':'st-rereview','Signed Off':'st-signed'};
+  const map={'Not Submitted':'st-not','Awaiting Review':'st-await','Re-Review':'st-rereview','Signed Off':'st-signed','No Action Needed':'st-noaction'};
   return `<span class="badge ${map[status]||'st-not'}">${esc(status)}</span>`;
 }
 // Refund transactions of Rs 500 or less are kept on the Sheet (nothing is
@@ -614,12 +664,20 @@ const NAV_ITEMS = [
 // NAV_ITEMS. Only called once render() has already confirmed someone is
 // logged in (see isLoggedIn() / render()) — there is no "nobody logged
 // in yet" case here anymore, so there's nothing to leak.
+// Which nav tabs a role is allowed to see/use, keyed the same as
+// NAV_ITEMS. Only called once render() has already confirmed someone is
+// logged in (see isLoggedIn() / render()). This is a UNION of every role
+// currently unlocked, not a first-match priority chain — a dual-role
+// login (Regional Manager who is also Cluster Manager of their own
+// cluster) unlocks BOTH roles at once (see the password gate handler),
+// so they need both roles' tabs, not whichever came first.
 function permittedTabs(){
   if(adminAuth.unlocked) return ['hq','store','cluster','regional','admin'];
-  if(storeAuth.unlocked) return ['store'];
-  if(clusterAuth.unlocked) return ['cluster']; // no HQ Dashboard — Cluster Manager is scoped to their own cluster only
-  if(regionalAuth.unlocked) return ['hq','regional'];
-  return [];
+  const tabs = new Set();
+  if(storeAuth.unlocked) tabs.add('store');
+  if(clusterAuth.unlocked) tabs.add('cluster'); // no HQ Dashboard from cluster alone — Cluster Manager is scoped to their own cluster only
+  if(regionalAuth.unlocked){ tabs.add('hq'); tabs.add('regional'); }
+  return [...tabs];
 }
 
 function renderShell(){
@@ -729,9 +787,13 @@ function renderStoreView(){
   const approvedDraftCount = mine.filter(t=>t.status==='Not Submitted' && t.storeApproval).length;
   const reReviewCount = mine.filter(t=>t.status==='Re-Review').length;
 
-  const categories = ['over30','refund','fullprice'];
+  const categories = ['over30','refund','fullprice','discounted'];
   const tables = categories.map(cat=>{
-    const rows = mine.filter(t=>t.category===cat).sort((a,b)=>a.date<b.date?1:-1);
+    // 'No Action Needed' transactions (Full Price on a regular day,
+    // Discounted during a sale) are visibility-only — see needsReview at
+    // import time — so they never appear here for the store to act on,
+    // only in the KPI/summary cards.
+    const rows = mine.filter(t=>t.category===cat && t.status!=='No Action Needed').sort((a,b)=>a.date<b.date?1:-1);
     return renderStoreCategoryTable(cat, rows, store);
   }).join('');
 
@@ -860,12 +922,13 @@ function storeSummaryRows(stores, txns){
     const ts = txns.filter(t=>t.storeCode===s.code);
     const c = st => ts.filter(t=>t.status===st).length;
     const cat = code => { const g = ts.filter(t=>t.category===code); return {count:g.length, qty:g.reduce((s,t)=>s+t.qty,0), amt:g.reduce((s,t)=>s+t.amount,0)}; };
-    const refund=cat('refund'), over30=cat('over30'), fullprice=cat('fullprice');
+    const refund=cat('refund'), over30=cat('over30'), fullprice=cat('fullprice'), discounted=cat('discounted');
     return `<tr>
       <td>${esc(s.name)}</td>
       <td class="num-cell">${refund.count}</td><td class="num-cell">${refund.qty}</td><td class="num-cell">${money(refund.amt)}</td>
       <td class="num-cell">${over30.count}</td><td class="num-cell">${over30.qty}</td><td class="num-cell">${money(over30.amt)}</td>
       <td class="num-cell">${fullprice.count}</td><td class="num-cell">${fullprice.qty}</td><td class="num-cell">${money(fullprice.amt)}</td>
+      <td class="num-cell">${discounted.count}</td><td class="num-cell">${discounted.qty}</td><td class="num-cell">${money(discounted.amt)}</td>
       <td class="num-cell">${c('Signed Off')}</td>
       <td class="num-cell">${c('Awaiting Review')}</td>
       <td class="num-cell">${c('Re-Review')}</td>
@@ -873,7 +936,7 @@ function storeSummaryRows(stores, txns){
     </tr>`;
   }).join('');
 }
-const STORE_SUMMARY_HEAD = `<tr><th>Store</th><th>Refund Txns</th><th>Refund Qty</th><th>Refund Value</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Qty</th><th>Return&gt;30 Value</th><th>Full Price Txns</th><th>Full Price Qty</th><th>Full Price Value</th><th>Signed Off</th><th>Awaiting</th><th>Re-Review</th><th>Not Submitted</th></tr>`;
+const STORE_SUMMARY_HEAD = `<tr><th>Store</th><th>Refund Txns</th><th>Refund Qty</th><th>Refund Value</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Qty</th><th>Return&gt;30 Value</th><th>Full Price Txns</th><th>Full Price Qty</th><th>Full Price Value</th><th>Discounted Txns</th><th>Discounted Qty</th><th>Discounted Value</th><th>Signed Off</th><th>Awaiting</th><th>Re-Review</th><th>Not Submitted</th></tr>`;
 
 /* =========================================================
    RETURN REASONS ANALYSIS — shared by HQ, Cluster Review, and
@@ -911,7 +974,12 @@ function renderReasonsCard(scopeTxns, scopeLabel){
   const notSubmitted = visible.filter(t=>t.status==='Not Submitted').length;
   const counts = {};
   visible.forEach(t=>{
-    const r = t.reason && t.reason.trim() ? t.reason : 'Not set yet';
+    // Covers BOTH cases in one label on purpose: a Not Submitted draft
+    // that hasn't gotten to the reason field yet, and a transaction
+    // that's already been submitted/reviewed with no reason ever
+    // recorded. The two aren't split out here — the "Not submitted by
+    // store" count above already tells you how many are still pending.
+    const r = t.reason && t.reason.trim() ? t.reason : 'Reason Not Recorded';
     counts[r] = counts[r] || {count:0, qty:0, amt:0};
     counts[r].count++; counts[r].qty += t.qty; counts[r].amt += t.amount;
   });
@@ -1082,7 +1150,7 @@ function clusterKpiRow(mgr, stores, txns){
   // "Qty" distinction). Showing Qty as the big number was being read as
   // transaction count and looked wrong against the skill's workbook.
   const c = cat => { const ts = txns.filter(t=>t.category===cat); return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)}; };
-  const refund=c('refund'), over30=c('over30'), fullprice=c('fullprice');
+  const refund=c('refund'), over30=c('over30'), fullprice=c('fullprice'), discounted=c('discounted');
   const bucket = b => txns.filter(t=>statusBucket(t.status)===b).length;
   return `<tr>
     <td>${esc(mgr)}</td>
@@ -1090,12 +1158,13 @@ function clusterKpiRow(mgr, stores, txns){
     <td class="num-cell">${refund.count}</td><td class="num-cell">${money(refund.amt)}</td>
     <td class="num-cell">${over30.count}</td><td class="num-cell">${money(over30.amt)}</td>
     <td class="num-cell">${fullprice.count}</td><td class="num-cell">${money(fullprice.amt)}</td>
+    <td class="num-cell">${discounted.count}</td><td class="num-cell">${money(discounted.amt)}</td>
     <td class="num-cell">${bucket('Signed Off')}</td>
     <td class="num-cell">${bucket('Not Started')}</td>
     <td class="num-cell">${bucket('Open Items')}</td>
   </tr>`;
 }
-const CLUSTER_TABLE_HEAD = `<tr><th>Cluster Manager</th><th>Stores</th><th>Refund Txns</th><th>Refund Amt</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Amt</th><th>Full Price Return Txns</th><th>Full Price Return Amt</th><th>Signed Off</th><th>Not Started</th><th>Open Items</th></tr>`;
+const CLUSTER_TABLE_HEAD = `<tr><th>Cluster Manager</th><th>Stores</th><th>Refund Txns</th><th>Refund Amt</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Amt</th><th>Full Price Return Txns</th><th>Full Price Return Amt</th><th>Discounted Return Txns</th><th>Discounted Return Amt</th><th>Signed Off</th><th>Not Started</th><th>Open Items</th></tr>`;
 
 function renderRegionalView(){
   const region = ctx.region;
@@ -1194,7 +1263,7 @@ function renderHQView(){
     const ts = filtered.filter(t=>t.category===cat);
     return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)};
   };
-  const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice');
+  const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice'), discounted=catKpi('discounted');
 
   const regionsInScope = f.region==='all' ? REGIONS : [f.region];
   // Unassigned (closed-store placeholder) is not a real cluster manager and
@@ -1228,10 +1297,11 @@ function renderHQView(){
       <div class="kpi"><div class="num">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
       <div class="kpi"><div class="num">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
     </div>
-    <div class="grid kpis" style="grid-template-columns:repeat(3,1fr);">
+    <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);">
       <div class="kpi accent"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
       <div class="kpi accent"><div class="num">${over30.count}</div><div class="lbl">Return &gt;30 Days Transactions · Qty ${over30.qty} · ${money(over30.amt)}</div></div>
       <div class="kpi accent"><div class="num">${fullprice.count}</div><div class="lbl">Full Price Sale Return Transactions · Qty (distinct) ${fullprice.count} · ${money(fullprice.amt)}</div></div>
+      <div class="kpi accent"><div class="num">${discounted.count}</div><div class="lbl">Discounted Sale Return Transactions · Qty ${discounted.qty} · ${money(discounted.amt)}</div></div>
     </div>
 
     <div class="card">
@@ -1287,7 +1357,7 @@ function renderCategorySummaryCard(txns, scopeLabel){
     const ts = visible.filter(t=>t.category===cat);
     return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)};
   };
-  const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice');
+  const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice'), discounted=catKpi('discounted');
   return `
     <div class="card">
       <div class="card-head"><h2>Category-wise Summary</h2><span class="count">${esc(scopeLabel)}</span></div>
@@ -1297,10 +1367,11 @@ function renderCategorySummaryCard(txns, scopeLabel){
           <div class="kpi"><div class="num">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
           <div class="kpi"><div class="num">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
         </div>
-        <div class="grid kpis" style="grid-template-columns:repeat(3,1fr);">
+        <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);">
           <div class="kpi accent"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
           <div class="kpi accent"><div class="num">${over30.count}</div><div class="lbl">Return &gt;30 Days Transactions · Qty ${over30.qty} · ${money(over30.amt)}</div></div>
           <div class="kpi accent"><div class="num">${fullprice.count}</div><div class="lbl">Full Price Sale Return Transactions · Qty ${fullprice.qty} · ${money(fullprice.amt)}</div></div>
+          <div class="kpi accent"><div class="num">${discounted.count}</div><div class="lbl">Discounted Sale Return Transactions · Qty ${discounted.qty} · ${money(discounted.amt)}</div></div>
         </div>
       </div>
     </div>`;
@@ -1355,9 +1426,34 @@ function renderAdminUploadBody(){
     </div>
 
     <div class="card">
+      <div class="card-head"><h2>Sale Days</h2></div>
+      <div class="card-body">
+        <p class="locked-note" style="margin-bottom:10px;">Controls which category needs a store remark + cluster sign-off on any given date: Full Price during a window below, Discounted outside every window. Both are always shown in every KPI card regardless — this only changes which one is treated as the anomaly. Add the next sale here when it's announced; no code change or redeploy needed.</p>
+        <table class="compact-table" style="margin-bottom:12px;">
+          <thead><tr><th>Start</th><th>End</th><th>Note</th><th>Added By</th><th></th></tr></thead>
+          <tbody>${(DATA.saleWindows||[]).length ? DATA.saleWindows.map(w=>`
+            <tr>
+              <td>${fmtDate(w.start)}</td>
+              <td>${fmtDate(w.end)}</td>
+              <td>${esc(w.note||'—')}</td>
+              <td>${esc(w.addedBy||'—')}</td>
+              <td><button class="btn sm danger" data-deletesalewindow="${esc(w.id)}">Delete</button></td>
+            </tr>`).join('') : `<tr><td colspan="5" class="empty">No sale windows on file — every day is treated as a regular day (Discounted is the anomaly).</td></tr>`}
+          </tbody>
+        </table>
+        <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
+          <div><span class="field-label">Start date</span><input type="date" id="saleWindowStart"></div>
+          <div><span class="field-label">End date</span><input type="date" id="saleWindowEnd"></div>
+          <div><span class="field-label">Note (optional)</span><input type="text" id="saleWindowNote" placeholder="e.g. Winter Sale 2026" style="min-width:200px;"></div>
+          <button class="btn sm" id="addSaleWindowBtn">Add Sale Window</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="card-head"><h2>Upload Return Report</h2></div>
       <div class="card-body">
-        <p class="locked-note" style="margin-bottom:10px;">Accepts the standard Return Report export (.xlsx) — header on row 7, one row per line-item. Store list, Region and Cluster Manager are already built in from Attributes_Store; you don't need to upload that sheet. Only Refund, Returns Over 30 Days and Full Price Sale Return transactions are imported — clean, on-time, discounted exchanges are skipped and counted separately in the summary below.</p>
+        <p class="locked-note" style="margin-bottom:10px;">Accepts the standard Return Report export (.xlsx) — header on row 7, one row per line-item. Store list, Region and Cluster Manager are already built in from Attributes_Store; you don't need to upload that sheet. Imported: Refund, Returns Over 30 Days, and — depending on the date — either Full Price Sale Return (during a Sale Days window) or Discounted Sale Return (outside one). Clean, on-time exchanges that don't match any of these are skipped and counted separately in the summary below.</p>
         <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
         <button class="btn sm" id="uploadBtn" style="margin-left:8px;">Upload &amp; Process</button>
         <div id="uploadSummaryBox"></div>
@@ -1576,20 +1672,28 @@ function bindDynamicHandlers(){
       const pass = gatePassInput.value;
       if(!pass){ showToast('Enter your access code.'); return; }
       gateUnlockBtn.disabled = true; gateUnlockBtn.textContent = 'Checking...';
-      const match = await verifyPasswordLogin(pass);
+      const matches = await verifyPasswordLogin(pass);
       gateUnlockBtn.disabled = false; gateUnlockBtn.textContent = 'Unlock';
-      if(!match){ showToast('Incorrect access code.'); return; }
-      if(match.role === 'admin'){
-        adminAuth.unlocked = true; screen = 'hq';
-      } else if(match.role === 'regional'){
-        regionalAuth.unlocked = true; regionalAuth.region = match.identifier; ctx.region = match.identifier; screen = 'hq';
-      } else if(match.role === 'cluster'){
-        clusterAuth.unlocked = true; clusterAuth.clusterManager = match.identifier; screen = 'cluster';
-      } else if(match.role === 'store'){
-        storeAuth.unlocked = true; storeAuth.storeCode = match.identifier; screen = 'store';
-      } else {
-        showToast('Unrecognized role from backend: '+match.role); return;
-      }
+      if(!matches){ showToast('Incorrect access code.'); return; }
+      // Unlock EVERY role this password matched — a dual-role person
+      // (e.g. Regional Manager who is also Cluster Manager of their own
+      // cluster) gets both sets of rights, not just one. permittedTabs()
+      // below unions whatever's unlocked, so both tabs show up together.
+      matches.forEach(match=>{
+        if(match.role === 'admin'){
+          adminAuth.unlocked = true;
+        } else if(match.role === 'regional'){
+          regionalAuth.unlocked = true; regionalAuth.region = match.identifier; ctx.region = match.identifier;
+        } else if(match.role === 'cluster'){
+          clusterAuth.unlocked = true; clusterAuth.clusterManager = match.identifier;
+        } else if(match.role === 'store'){
+          storeAuth.unlocked = true; storeAuth.storeCode = match.identifier;
+        }
+      });
+      // Landing screen: pick the broadest role's home tab. Every other
+      // unlocked role's tab is still reachable from the nav bar — this
+      // only decides what's showing the moment you log in.
+      screen = adminAuth.unlocked ? 'hq' : regionalAuth.unlocked ? 'hq' : clusterAuth.unlocked ? 'cluster' : storeAuth.unlocked ? 'store' : 'hq';
       render();
     };
   }
@@ -1625,6 +1729,16 @@ function bindDynamicHandlers(){
   });
   document.querySelectorAll('[data-forceremoveupload]').forEach(b=>{
     b.onclick = ()=>forceRemoveUpload(b.dataset.forceremoveupload);
+  });
+  const addSaleWindowBtn = document.getElementById('addSaleWindowBtn');
+  if(addSaleWindowBtn) addSaleWindowBtn.onclick = ()=>{
+    const start = document.getElementById('saleWindowStart').value;
+    const end = document.getElementById('saleWindowEnd').value;
+    const note = document.getElementById('saleWindowNote').value;
+    addSaleWindowRemote(start, end, note);
+  };
+  document.querySelectorAll('[data-deletesalewindow]').forEach(b=>{
+    b.onclick = ()=>deleteSaleWindowRemote(b.dataset.deletesalewindow);
   });
   document.querySelectorAll('[data-reason-toggle]').forEach(el=>{
     el.onclick = ()=>{
@@ -1764,11 +1878,12 @@ function reviewRoundCell(t, round){
    check aborts the import with a clear mismatch message rather than
    silently misaligning data.
 
-   Only Refund, Over 30 Days and Full Price Sale Return transactions
-   are imported. A clean, on-time, discounted exchange is not a
-   compliance item and is intentionally skipped — the upload summary
-   reports how many were skipped this way so nothing silently
-   disappears.
+   Refund, Over 30 Days, and one of Full Price Sale Return / Discounted
+   Sale Return (whichever is the anomaly for that transaction's date —
+   see SALE_WINDOWS) are imported. A clean, on-time exchange that
+   matches none of these is not a compliance item and is intentionally
+   skipped — the upload summary reports how many were skipped this way
+   so nothing silently disappears.
    ========================================================= */
 const SRC_HEADER_ROW_1BASED = 7; // documented header row; verified by content, not just position
 const EXPECTED_HEADERS = [
@@ -1919,7 +2034,7 @@ function handleUpload(){
             origTransaction: '', origDate: null, paymentMethod: '', txnType: '',
             returnQty: 0, returnTotal: 0, soldTotal: 0, itemCount: 0,
             fullPriceItemCount: 0, discountedItemCount: 0, discountValue: 0,
-            fullPriceValue: 0, barcodes: [],
+            fullPriceValue: 0, discountedValue: 0, barcodes: [],
           });
         }
         const g = groups.get(key);
@@ -1944,6 +2059,12 @@ function handleUpload(){
           } else {
             g.discountedItemCount++;
             g.discountValue += (rowFullPriceValue - rowActual);
+            // Actual returned value of the discounted line(s) — mirrors
+            // fullPriceValue above. This, not discountValue (which is just
+            // the discount's SIZE), is what the 'discounted' compliance
+            // category reports, symmetric to how 'fullprice' reports
+            // fullPriceValue rather than some other derived figure.
+            g.discountedValue += rowActual;
           }
           const rowBarcode = String(row[COL.RETURN_BARCODE]).trim();
           const existingBarcode = g.barcodes.find(b=>b.barcode===rowBarcode);
@@ -1983,12 +2104,31 @@ function handleUpload(){
         // compliance event as a full-price cash/exchange return, and mixing
         // them was flagged as a reporting error.
         const isFullPriceReturn = g.fullPriceItemCount > 0 && !isCreditMemo;
+        const isDiscountedReturn = g.discountedItemCount > 0 && !isCreditMemo;
+        const returnIsoDate = isoDate(g.returnDate);
+        const inSaleWindow = g.returnDate ? isInSaleWindow(returnIsoDate) : false;
 
+        // Both Full Price and Discounted are ALWAYS categorized and shown
+        // in every KPI/summary card, on every day — visibility doesn't
+        // turn off just because it isn't the anomaly today. What changes
+        // with the sale window is only whether the transaction NEEDS a
+        // store remark + cluster sign-off:
+        //   Sale Days: Full Price is the anomaly (review required),
+        //              Discounted is expected (view-only).
+        //   Regular days: Discounted is the anomaly (review required),
+        //                 Full Price is expected (view-only).
+        // Full Price takes priority when a transaction has BOTH kinds of
+        // lines (priceType 'Mixed') — same precedence as before this
+        // dual-visibility change.
         let category = null;
         if(isOver30) category = 'over30';
         else if(isRefund) category = 'refund';
         else if(isFullPriceReturn) category = 'fullprice';
+        else if(isDiscountedReturn) category = 'discounted';
         if(!category){ notFlagged++; return; }
+        const needsReview = category==='over30' || category==='refund'
+          || (category==='fullprice' && inSaleWindow)
+          || (category==='discounted' && !inSaleWindow);
 
         existingKeys.add(g.key);
         // Compliance "amount" is metric-specific, matching the skill's Store
@@ -1996,9 +2136,13 @@ function handleUpload(){
         // risk from a late return). Refund reports Remaining Balance (Return
         // Value - Sold Value) — the money actually leaked to the customer.
         // Full Price Sale Return reports the value of the full-price line(s)
-        // actually returned — the "Transactions Value" for that KPI.
+        // actually returned. Discounted Sale Return mirrors that exactly,
+        // reporting the value of the discounted line(s) actually returned —
+        // NOT the discount amount itself (g.discountValue is a different,
+        // smaller number: how much was knocked off, not what came back).
         const complianceAmount = category === 'over30' ? g.returnTotal
           : category === 'refund' ? remainingBalance
+          : category === 'discounted' ? g.discountedValue
           : g.fullPriceValue;
         let priceType = 'N/A';
         if(g.fullPriceItemCount>0 && g.discountedItemCount===0) priceType = 'Full Price';
@@ -2027,7 +2171,7 @@ function handleUpload(){
           discountValue: g.discountValue,
           barcodes: g.barcodes,
           origTransaction: g.origTransaction,
-          status: 'Not Submitted',
+          status: needsReview ? 'Not Submitted' : 'No Action Needed',
           uploadId: uploadBatchId,
         }));
         imported++;
