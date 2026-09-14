@@ -1091,29 +1091,19 @@ function renderBelowThresholdCard(rawScopeTxns, scopeLabel){
 // that are already sitting in whatever category "won."
 function renderMultiCriteriaCard(scopeTxns, scopeLabel){
   const visible = scopeTxns.filter(t=>!isHiddenLowValueRefund(t));
-  const flagged = visible.filter(t=>t.matchedCriteria && t.matchedCriteria.split(',').length>=2);
-  const totalValue = flagged.reduce((s,t)=>s+t.amount,0);
-  const rows = flagged.sort((a,b)=>b.matchedCriteria.split(',').length - a.matchedCriteria.split(',').length).map(t=>`
-    <tr>
-      <td>${esc(t.transactionNumber)}</td>
-      <td>${esc(t.storeCode)}</td>
-      <td>${esc(CATEGORY_LABEL[t.category]||t.category)}</td>
-      <td>${esc(t.matchedCriteria)}</td>
-      <td class="num-cell">${money(t.amount)}</td>
-      <td>${badge(t.status)}</td>
-    </tr>`).join('') || `<tr><td colspan="6" class="empty">No transactions matching more than one criterion in this scope.</td></tr>`;
-
+  const flagged = visible.filter(t=>t.matchedCriteria && t.matchedCriteria.split(', ').length>=2);
+  const qty = flagged.reduce((s,t)=>s+t.qty,0);
+  const amt = flagged.reduce((s,t)=>s+t.amount,0);
   return `
     <div class="card">
       <div class="card-head"><h2>Multiple Criteria — Elevated Risk</h2><span class="count">${esc(scopeLabel)}</span></div>
       <div class="card-body">
-        <p class="locked-note" style="margin-bottom:10px;">Transactions matching two or more compliance signals at once — they're still counted under whichever single category won (Over 30 &gt; Refund &gt; Full Price &gt; Discounted), this table just makes the overlap visible instead of hidden inside one bucket.</p>
-        <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:12px;">
-          <div><span class="field-label">Flagged transactions</span><div style="font-size:20px;font-weight:600;">${flagged.length}</div></div>
-          <div><span class="field-label">Total value</span><div style="font-size:20px;font-weight:600;">${money(totalValue)}</div></div>
+        <p class="locked-note" style="margin-bottom:10px;">Distinct transaction count, quantity and value for transactions matching two or more compliance signals at once — a summary only. Which specific criteria overlap on any one transaction is shown directly against it in Store Entry (for store remarks) and the Cluster Review Queue (for sign-off), not repeated here as a list.</p>
+        <div class="grid kpis" style="grid-template-columns:repeat(3,1fr);">
+          <div class="kpi accent"><div class="num">${flagged.length}</div><div class="lbl">Distinct Transactions</div></div>
+          <div class="kpi accent"><div class="num">${qty}</div><div class="lbl">Total Quantity</div></div>
+          <div class="kpi accent"><div class="num">${money(amt)}</div><div class="lbl">Total Value</div></div>
         </div>
-        <table class="compact-table" style="overflow-x:auto;"><thead><tr><th>Transaction No.</th><th>Store</th><th>Assigned Category</th><th>All Matched Criteria</th><th>Value</th><th>Status</th></tr></thead>
-        <tbody>${rows}</tbody></table>
       </div>
     </div>`;
 }
@@ -2208,12 +2198,19 @@ function handleUpload(){
         // multi-criteria risk view precisely because it's more than one
         // thing at once. matchedCriteria.length is always >=1 whenever a
         // category was assigned; >=2 is the actual overlap worth flagging.
+        // Full Price / Discounted only count as a RISK signal when they're
+        // actually the anomaly for this date — same condition as
+        // needsReview above. On a regular day, having full-price lines is
+        // normal, not a risk; flagging it here would tell a store manager
+        // "this is elevated risk" for something that isn't, which is worse
+        // than not flagging it at all. Over 30 / Credit Memo / Refund carry
+        // no such date dependency, so they're unconditional.
         const matchedLabels = [];
         if(isOver30) matchedLabels.push('Over 30 Days');
         if(isCreditMemo) matchedLabels.push('Credit Memo');
         if(normText(g.txnType)==='refund' || remainingBalance>0) matchedLabels.push('Refund');
-        if(g.fullPriceItemCount>0) matchedLabels.push('Full Price Sale Return');
-        if(g.discountedItemCount>0) matchedLabels.push('Discounted Return');
+        if(g.fullPriceItemCount>0 && inSaleWindow) matchedLabels.push('Full Price Sale Return');
+        if(g.discountedItemCount>0 && !inSaleWindow) matchedLabels.push('Discounted Return');
         const matchedCriteria = matchedLabels.join(', ');
 
         existingKeys.add(g.key);
