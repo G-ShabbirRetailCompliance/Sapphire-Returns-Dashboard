@@ -304,6 +304,15 @@ function baseTxn(t){
     discountValue: t.discountValue || 0, // sum of (full-price value - actual) across discounted line items
     barcodes: t.barcodes || [],      // [{barcode, qty, amount, fullPrice}] — line-level detail under this transaction
     origTransaction: t.origTransaction || '', // Original (sale) transaction number from the report
+    // Every compliance signal this transaction actually exhibits, computed
+    // at import time regardless of which single one became the assigned
+    // `category` above — 'category' is a priority-ordered PICK (Over 30 >
+    // Refund > Full Price > Discounted, Credit Memo excluding the latter
+    // three), so a transaction that's genuinely BOTH late and full-price
+    // still only ever gets 'over30' as its category, and this field is the
+    // only place that second signal survives. Comma-joined string, not an
+    // array, since it round-trips through a single Sheet cell.
+    matchedCriteria: t.matchedCriteria || '',
     uploadId: t.uploadId || null, // which Admin upload batch this came from — used to remove a bad/duplicate upload without touching anything else
     storeApproval: submitted ? true : false,
     storeRemarks: submitted ? t.storeRemarks || '' : '',
@@ -839,6 +848,24 @@ function flattenToLines(rows){
   return lines;
 }
 
+// Maps a category code to the exact label it produces inside
+// matchedCriteria (see the import-time matchedLabels computation) — used
+// to filter OUT a transaction's own category from its risk-flag display,
+// since seeing "Refund" repeated on a row already inside the Refund table
+// tells the reviewer nothing new.
+const CATEGORY_TO_CRITERION_LABEL = { over30:'Over 30 Days', refund:'Refund', fullprice:'Full Price Sale Return', discounted:'Discounted Return' };
+// Renders the "also matches" risk indicator for one transaction, or ''
+// when there's nothing beyond its own assigned category to flag. Shown
+// directly on the row a store fills remarks on / a cluster manager
+// signs off, not just in the separate Multiple Criteria summary card —
+// the whole point is the person acting on THIS transaction sees the risk
+// at the moment they act, not only in a report they may never open.
+function riskFlagCell(t){
+  const others = (t.matchedCriteria||'').split(', ').filter(c=>c && c!==CATEGORY_TO_CRITERION_LABEL[t.category]);
+  if(!others.length) return '—';
+  return `<span class="badge st-rereview" title="This transaction also matches: ${esc(others.join(', '))}">⚠ ${esc(others.join(', '))}</span>`;
+}
+
 function renderStoreCategoryTable(cat, rows, store){
   // Refund Amount is the money actually leaked to the customer (Return
   // Value minus Sold Value — see the import-time comment where
@@ -849,7 +876,7 @@ function renderStoreCategoryTable(cat, rows, store){
     .concat(cat==='refund' ? ['Refund Amount'] : [])
     .concat(['Payment Method'])
     .concat(cat==='over30' ? ['Aging (days)'] : [])
-    .concat(['Price Type','Original Transaction','Is Approved by Manager','Reason for Return','Store Remarks','Status','Cluster Review','Cluster Manager Review 2']);
+    .concat(['Price Type','Original Transaction','Also Matches','Is Approved by Manager','Reason for Return','Store Remarks','Status','Cluster Review','Cluster Manager Review 2']);
 
   const lines = flattenToLines(rows);
 
@@ -869,6 +896,7 @@ function renderStoreCategoryTable(cat, rows, store){
       ${cat==='over30' ? `<td class="num-cell">${t.agingDays==null?'—':t.agingDays}</td>` : ''}
       <td>${esc(priceTypeLine)}</td>
       <td class="mono">${esc(t.origTransaction||'—')}</td>
+      <td>${idx!==0 ? '' : riskFlagCell(t)}</td>
       <td>${idx!==0 ? '' : (editable ? `<input type="checkbox" data-approve="${t.id}" ${t.storeApproval?'checked':''}>` : (t.storeApproval? '✓':'—'))}</td>
       <td style="min-width:170px;">${idx!==0 ? '' : reasonCell(t, editable)}</td>
       <td style="min-width:200px;">${idx!==0 ? '' : (
@@ -1053,6 +1081,43 @@ function renderBelowThresholdCard(rawScopeTxns, scopeLabel){
     </div>`;
 }
 
+// Highlights transactions that trip MORE THAN ONE compliance signal at
+// once (e.g. genuinely late AND full-price, or a Refund that's also
+// Discounted) — these are exactly the ones the single-category KPI cards
+// structurally can't surface, since a transaction only ever gets ONE
+// `category` via the priority chain (Over 30 > Refund > Full Price >
+// Discounted). This card doesn't change anyone's workflow or add a new
+// review step — it's pure visibility into elevated-risk transactions
+// that are already sitting in whatever category "won."
+function renderMultiCriteriaCard(scopeTxns, scopeLabel){
+  const visible = scopeTxns.filter(t=>!isHiddenLowValueRefund(t));
+  const flagged = visible.filter(t=>t.matchedCriteria && t.matchedCriteria.split(',').length>=2);
+  const totalValue = flagged.reduce((s,t)=>s+t.amount,0);
+  const rows = flagged.sort((a,b)=>b.matchedCriteria.split(',').length - a.matchedCriteria.split(',').length).map(t=>`
+    <tr>
+      <td>${esc(t.transactionNumber)}</td>
+      <td>${esc(t.storeCode)}</td>
+      <td>${esc(CATEGORY_LABEL[t.category]||t.category)}</td>
+      <td>${esc(t.matchedCriteria)}</td>
+      <td class="num-cell">${money(t.amount)}</td>
+      <td>${badge(t.status)}</td>
+    </tr>`).join('') || `<tr><td colspan="6" class="empty">No transactions matching more than one criterion in this scope.</td></tr>`;
+
+  return `
+    <div class="card">
+      <div class="card-head"><h2>Multiple Criteria — Elevated Risk</h2><span class="count">${esc(scopeLabel)}</span></div>
+      <div class="card-body">
+        <p class="locked-note" style="margin-bottom:10px;">Transactions matching two or more compliance signals at once — they're still counted under whichever single category won (Over 30 &gt; Refund &gt; Full Price &gt; Discounted), this table just makes the overlap visible instead of hidden inside one bucket.</p>
+        <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:12px;">
+          <div><span class="field-label">Flagged transactions</span><div style="font-size:20px;font-weight:600;">${flagged.length}</div></div>
+          <div><span class="field-label">Total value</span><div style="font-size:20px;font-weight:600;">${money(totalValue)}</div></div>
+        </div>
+        <table class="compact-table" style="overflow-x:auto;"><thead><tr><th>Transaction No.</th><th>Store</th><th>Assigned Category</th><th>All Matched Criteria</th><th>Value</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+      </div>
+    </div>`;
+}
+
 function renderClusterView(){
   const mgr = clusterAuth.clusterManager;
   const stores = STORES.filter(s=>s.clusterManager===mgr && !s.closed);
@@ -1074,7 +1139,7 @@ function renderClusterView(){
 
   const queue = all.filter(t=>t.status==='Awaiting Review').sort((a,b)=>a.date<b.date?1:-1);
   const queueLines = flattenToLines(queue);
-  const QUEUE_COLS = 18;
+  const QUEUE_COLS = 19;
 
   const queueRows = queueLines.length ? queueLines.map(({t,b,idx})=>{
     const store = storeByCode(t.storeCode);
@@ -1091,6 +1156,7 @@ function renderClusterView(){
       <td>${esc(t.paymentMethod||'—')}</td>
       <td>${esc(priceTypeLine)}</td>
       <td class="mono">${esc(t.origTransaction||'—')}</td>
+      <td>${idx!==0?'':riskFlagCell(t)}</td>
       <td>${idx!==0?'':esc(t.reason==='Other'?`Other — ${t.reasonRemarks||'(no remarks)'}`:(t.reason||'—'))}</td>
       <td>${idx!==0?'':`<div class="remark-locked">${esc(t.storeRemarks)||'—'}</div>`}</td>
       <td>${idx!==0?'':badge(t.status)}</td>
@@ -1131,11 +1197,12 @@ function renderClusterView(){
     <div class="card">
       <div class="card-head"><h2>Review Queue</h2><span class="count">${queue.length} awaiting</span></div>
       <div class="card-body" style="overflow-x:auto;">
-        <table><thead><tr><th>Store</th><th>Return Date</th><th>Time</th><th>Transaction No.</th><th>Barcode</th><th>Return Qty</th><th>Return Amount</th><th>Refund Amount</th><th>Payment Method</th><th>Price Type</th><th>Original Transaction</th><th>Reason for Return</th><th>Store Remarks</th><th>Status</th><th>Cluster Review</th><th>Cluster Manager Review 2</th><th>Cluster Remarks (this round)</th><th>Action</th></tr></thead>
+        <table><thead><tr><th>Store</th><th>Return Date</th><th>Time</th><th>Transaction No.</th><th>Barcode</th><th>Return Qty</th><th>Return Amount</th><th>Refund Amount</th><th>Payment Method</th><th>Price Type</th><th>Original Transaction</th><th>Also Matches</th><th>Reason for Return</th><th>Store Remarks</th><th>Status</th><th>Cluster Review</th><th>Cluster Manager Review 2</th><th>Cluster Remarks (this round)</th><th>Action</th></tr></thead>
         <tbody>${queueRows}</tbody></table>
       </div>
     </div>
     ${renderReasonsCard(all, mgr)}
+    ${renderMultiCriteriaCard(all, mgr)}
     ${renderBelowThresholdCard(allRaw, mgr)}
   `;
 }
@@ -1232,6 +1299,7 @@ function renderRegionalView(){
       </div>
     </div>
     ${renderReasonsCard(regionScope, region)}
+    ${renderMultiCriteriaCard(regionScope, region)}
     ${renderBelowThresholdCard(regionScopeRaw, region)}
   `;
 }
@@ -1311,6 +1379,7 @@ function renderHQView(){
       </div>
     </div>
     ${renderReasonsCard(filtered, regionLocked ? f.region : 'All Regions')}
+    ${renderMultiCriteriaCard(filtered, regionLocked ? f.region : 'All Regions')}
     ${renderBelowThresholdCard(filteredRaw, regionLocked ? f.region : 'All Regions')}
   `;
 }
@@ -1404,6 +1473,7 @@ function renderAdminUploadBody(){
   return `
     ${renderCategorySummaryCard(DATA.transactions, 'All stores, all dates')}
     ${renderReasonsCard(DATA.transactions, 'All stores, all dates')}
+    ${renderMultiCriteriaCard(DATA.transactions, 'All stores, all dates')}
     ${renderBelowThresholdCard(DATA.transactions, 'All stores, all dates')}
     <div class="note-box">Live and backed by your Google Sheet via the Apps Script Web App — every save here writes to the DataStore tab, and every load reads from it. This is not a local-only prototype.</div>
 
@@ -2130,6 +2200,22 @@ function handleUpload(){
           || (category==='fullprice' && inSaleWindow)
           || (category==='discounted' && !inSaleWindow);
 
+        // Every signal this transaction ACTUALLY exhibits, checked without
+        // the Credit Memo exclusion or the priority chain above — this is
+        // deliberately broader than `category`. A transaction that's both
+        // late AND full-price only ever gets 'over30' as its one category
+        // (Over 30 wins the priority chain), but it belongs in the
+        // multi-criteria risk view precisely because it's more than one
+        // thing at once. matchedCriteria.length is always >=1 whenever a
+        // category was assigned; >=2 is the actual overlap worth flagging.
+        const matchedLabels = [];
+        if(isOver30) matchedLabels.push('Over 30 Days');
+        if(isCreditMemo) matchedLabels.push('Credit Memo');
+        if(normText(g.txnType)==='refund' || remainingBalance>0) matchedLabels.push('Refund');
+        if(g.fullPriceItemCount>0) matchedLabels.push('Full Price Sale Return');
+        if(g.discountedItemCount>0) matchedLabels.push('Discounted Return');
+        const matchedCriteria = matchedLabels.join(', ');
+
         existingKeys.add(g.key);
         // Compliance "amount" is metric-specific, matching the skill's Store
         // Summary: Over 30 Days reports raw Return Value (the full amount at
@@ -2171,6 +2257,7 @@ function handleUpload(){
           discountValue: g.discountValue,
           barcodes: g.barcodes,
           origTransaction: g.origTransaction,
+          matchedCriteria,
           status: needsReview ? 'Not Submitted' : 'No Action Needed',
           uploadId: uploadBatchId,
         }));
