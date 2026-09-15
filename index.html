@@ -63,9 +63,9 @@
   .kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:18px;}
   .kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;}
   .kpi .num{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;}
-  .kpi .num.num-green{color:var(--green);}
-  .kpi .num.num-red{color:var(--red);}
-  .kpi .num.num-amber{color:var(--amber);}
+  .num-green{color:var(--green);}
+  .num-red{color:var(--red);}
+  .num-amber{color:var(--amber);}
   .kpi .lbl{font-size:12px;color:var(--ink-600);margin-top:2px;}
   .pct-bar-track{background:var(--grey-bg);border-radius:20px;height:6px;width:70px;overflow:hidden;display:inline-block;vertical-align:middle;}
   .pct-bar-fill{height:100%;border-radius:20px;}
@@ -1037,10 +1037,10 @@ function storeSummaryRows(stores, txns){
       <td class="num-cell">${over30.count}</td><td class="num-cell">${over30.qty}</td><td class="num-cell">${money(over30.amt)}</td>
       <td class="num-cell">${fullprice.count}</td><td class="num-cell">${fullprice.qty}</td><td class="num-cell">${money(fullprice.amt)}</td>
       <td class="num-cell">${discounted.count}</td><td class="num-cell">${discounted.qty}</td><td class="num-cell">${money(discounted.amt)}</td>
-      <td class="num-cell">${c('Signed Off')}</td>
-      <td class="num-cell">${c('Awaiting Review')}</td>
-      <td class="num-cell">${c('Re-Review')}</td>
-      <td class="num-cell">${c('Not Submitted')}</td>
+      <td class="num-cell num-green">${c('Signed Off')}</td>
+      <td class="num-cell num-red">${c('Awaiting Review')}</td>
+      <td class="num-cell num-red">${c('Re-Review')}</td>
+      <td class="num-cell num-red">${c('Not Submitted')}</td>
     </tr>`;
   }).join('');
 }
@@ -1315,9 +1315,9 @@ function clusterKpiRow(mgr, stores, txns){
     <td class="num-cell">${over30.count}</td><td class="num-cell">${money(over30.amt)}</td>
     <td class="num-cell">${fullprice.count}</td><td class="num-cell">${money(fullprice.amt)}</td>
     <td class="num-cell">${discounted.count}</td><td class="num-cell">${money(discounted.amt)}</td>
-    <td class="num-cell">${signedOff}</td>
-    <td class="num-cell">${notStarted}</td>
-    <td class="num-cell">${openItems}</td>
+    <td class="num-cell num-green">${signedOff}</td>
+    <td class="num-cell num-red">${notStarted}</td>
+    <td class="num-cell num-red">${openItems}</td>
     <td class="num-cell">${pctBarCell(completionPct)}</td>
   </tr>`;
 }
