@@ -40,6 +40,8 @@
   .brand .mark{width:30px;height:30px;border-radius:5px;background:linear-gradient(135deg,var(--teal-500),var(--teal-600));display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;}
   .brand .title{font-size:14.5px;font-weight:600;letter-spacing:.2px;}
   .brand .sub{font-size:11.5px;color:#9FB4C4;}
+  .live-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:#CBE6E8;font-size:11px;font-weight:600;padding:4px 10px 4px 8px;border-radius:20px;white-space:nowrap;}
+  .live-badge::before{content:'●';color:var(--teal-500);font-size:9px;}
 
   .role-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 0;}
   .role-bar select{background:var(--navy-700);color:#fff;border:1px solid #24506e;border-radius:5px;padding:6px 10px;font-size:13px;}
@@ -47,10 +49,10 @@
   .clock{font-size:11.5px;color:#9FB4C4;text-align:right;}
   .clock b{color:#fff;font-weight:600;}
 
-  nav.tabs{background:var(--navy-800);display:flex;gap:2px;padding:0 20px;overflow-x:auto;}
-  nav.tabs button{background:transparent;border:none;color:#B7C7D3;padding:11px 16px;font-size:13.2px;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;}
-  nav.tabs button:hover{color:#fff;}
-  nav.tabs button.active{color:#fff;border-bottom-color:var(--teal-500);}
+  nav.tabs{background:var(--navy-800);display:flex;gap:6px;padding:8px 20px;overflow-x:auto;}
+  nav.tabs button{background:rgba(255,255,255,.06);border:none;border-radius:20px;color:#B7C7D3;padding:7px 16px;font-size:12.8px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .12s;}
+  nav.tabs button:hover{background:rgba(255,255,255,.14);color:#fff;}
+  nav.tabs button.active{background:#fff;color:var(--navy-900);}
 
   main{max-width:1320px;margin:0 auto;padding:22px 20px 60px;}
   .panel-head{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:16px;}
@@ -61,7 +63,20 @@
   .kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:18px;}
   .kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;}
   .kpi .num{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;}
+  .kpi .num.num-green{color:var(--green);}
+  .kpi .num.num-red{color:var(--red);}
+  .kpi .num.num-amber{color:var(--amber);}
   .kpi .lbl{font-size:12px;color:var(--ink-600);margin-top:2px;}
+  .pct-bar-track{background:var(--grey-bg);border-radius:20px;height:6px;width:70px;overflow:hidden;display:inline-block;vertical-align:middle;}
+  .pct-bar-fill{height:100%;border-radius:20px;}
+  .pct-bar-fill.pb-red{background:var(--red);}
+  .pct-bar-fill.pb-amber{background:var(--amber);}
+  .pct-bar-fill.pb-green{background:var(--green);}
+  .pct-cell{display:flex;align-items:center;gap:8px;justify-content:flex-end;}
+  .pct-cell .pct-num{font-weight:700;min-width:36px;text-align:right;}
+  .pct-cell .pct-num.pb-red{color:var(--red);}
+  .pct-cell .pct-num.pb-amber{color:var(--amber);}
+  .pct-cell .pct-num.pb-green{color:var(--green);}
   .kpi.accent{border-left:3px solid var(--teal-600);}
   .kpi.status-done{border-left:3px solid var(--green);}
   .kpi.status-pending{border-left:3px solid var(--red);}
@@ -158,6 +173,7 @@
       <div class="title">Returns &amp; Refunds Compliance</div>
       <div class="sub">Sapphire Retail · Operations Governance &amp; Control</div>
     </div>
+    <span class="live-badge">Live Dashboard</span>
   </div>
   <div style="display:flex;align-items:center;gap:16px;">
     <span id="savingFlag" style="display:none;font-size:11px;color:#e8b34a;font-weight:600;">● Saving…</span>
@@ -1264,6 +1280,15 @@ function renderClusterView(){
 /* =========================================================
    REGIONAL VIEW
    ========================================================= */
+// Shared red/amber/green progress-bar-plus-number cell for any
+// percentage in the dashboard — thresholds: under 60% is red (needs
+// attention), 60–94% is amber (getting there), 95%+ is green (done).
+function pctBarCell(pct){
+  if(pct==null) return '—';
+  const tier = pct>=95 ? 'pb-green' : pct>=60 ? 'pb-amber' : 'pb-red';
+  return `<div class="pct-cell"><span class="pct-num ${tier}">${pct}%</span><span class="pct-bar-track"><span class="pct-bar-fill ${tier}" style="width:${Math.min(100,pct)}%;"></span></span></div>`;
+}
+
 function clusterKpiRow(mgr, stores, txns){
   // Headline number is distinct TRANSACTION COUNT, not item Qty — a
   // transaction can carry several line items, so Qty (10) and Txn Count (7)
@@ -1293,7 +1318,7 @@ function clusterKpiRow(mgr, stores, txns){
     <td class="num-cell">${signedOff}</td>
     <td class="num-cell">${notStarted}</td>
     <td class="num-cell">${openItems}</td>
-    <td class="num-cell">${completionPct==null ? '—' : completionPct+'%'}</td>
+    <td class="num-cell">${pctBarCell(completionPct)}</td>
   </tr>`;
 }
 const CLUSTER_TABLE_HEAD = `<tr><th>Cluster Manager</th><th>Stores</th><th>Refund Txns</th><th>Refund Amt</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Amt</th><th>Full Price Return Txns</th><th>Full Price Return Amt</th><th>Discounted Return Txns</th><th>Discounted Return Amt</th><th>Signed Off</th><th>Not Started</th><th>Open Items</th><th>Completion %</th></tr>`;
@@ -1437,9 +1462,9 @@ function renderHQView(){
 
     <div class="grid kpi-status">
       <div class="kpi" data-kpi="total"><div class="num">${filtered.length}</div><div class="lbl">Total Transactions</div></div>
-      <div class="kpi status-done" data-kpi="signedoff"><div class="num">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
-      <div class="kpi status-pending" data-kpi="notstarted"><div class="num">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
-      <div class="kpi status-pending" data-kpi="openitems"><div class="num">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
+      <div class="kpi status-done" data-kpi="signedoff"><div class="num num-green">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
+      <div class="kpi status-pending" data-kpi="notstarted"><div class="num num-red">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
+      <div class="kpi status-pending" data-kpi="openitems"><div class="num num-red">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
     </div>
     <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);">
       <div class="kpi accent" data-kpi="refund"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
@@ -1519,9 +1544,9 @@ function renderCategorySummaryCard(txns, scopeLabel){
       <div class="card-body">
         <div class="grid kpi-status">
           <div class="kpi" data-kpi="total"><div class="num">${visible.length}</div><div class="lbl">Total Transactions</div></div>
-          <div class="kpi status-done" data-kpi="signedoff"><div class="num">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
-          <div class="kpi status-pending" data-kpi="notstarted"><div class="num">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
-          <div class="kpi status-pending" data-kpi="openitems"><div class="num">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
+          <div class="kpi status-done" data-kpi="signedoff"><div class="num num-green">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
+          <div class="kpi status-pending" data-kpi="notstarted"><div class="num num-red">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
+          <div class="kpi status-pending" data-kpi="openitems"><div class="num num-red">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
         </div>
         <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);">
           <div class="kpi accent" data-kpi="refund"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
