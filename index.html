@@ -63,8 +63,17 @@
   .kpi .num{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;}
   .kpi .lbl{font-size:12px;color:var(--ink-600);margin-top:2px;}
   .kpi.accent{border-left:3px solid var(--teal-600);}
+  .kpi.status-done{border-left:3px solid var(--green);}
+  .kpi.status-pending{border-left:3px solid var(--red);}
 
   .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:18px;overflow:hidden;}
+  .kpi[data-kpi]{cursor:pointer;transition:box-shadow .15s;}
+  .kpi[data-kpi]:hover{box-shadow:0 0 0 2px var(--navy,#1c3a5e) inset;}
+  .modal-overlay{position:fixed;inset:0;background:rgba(20,25,32,.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .modal-box{background:var(--card);border-radius:var(--radius);max-width:1100px;width:100%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;}
+  .modal-head{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line);}
+  .modal-head h2{margin:0;font-size:16px;}
+  .modal-body{padding:16px 20px;overflow:auto;}
   .card > .card-head{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;background:#FAFBFC;}
   .card > .card-head h2{font-size:14px;margin:0;font-weight:650;}
   .card > .card-head .count{font-size:12px;color:var(--ink-600);}
@@ -85,11 +94,11 @@
   .num-cell{text-align:right;font-variant-numeric:tabular-nums;}
 
   .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap;}
-  .badge.st-not{background:var(--grey-bg);color:var(--grey);}
-  .badge.st-await{background:var(--amber-bg);color:var(--amber);}
+  .badge.st-not{background:var(--red-bg);color:var(--red);}
+  .badge.st-await{background:var(--red-bg);color:var(--red);}
   .badge.st-rereview{background:var(--red-bg);color:var(--red);}
   .badge.st-signed{background:var(--green-bg);color:var(--green);}
-  .badge.st-noaction{background:var(--grey-bg);color:var(--grey);font-style:italic;}
+  .badge.st-noaction{background:var(--green-bg);color:var(--green);font-style:italic;}
 
   .btn{display:inline-flex;align-items:center;gap:6px;background:var(--teal-600);color:#fff;border:none;border-radius:5px;padding:7px 13px;font-size:12.5px;font-weight:600;cursor:pointer;}
   .btn:hover{background:var(--teal-500);}
@@ -137,7 +146,7 @@
   .auto-field{background:#F6F8F9;border-radius:5px;padding:7px 10px;font-size:12.8px;color:var(--ink-600);}
   .session-bar{display:flex;align-items:center;justify-content:space-between;background:#EDF6F6;border:1px solid #CFE7E8;border-radius:6px;padding:8px 14px;margin-bottom:16px;font-size:12.5px;}
   .session-bar a{cursor:pointer;color:var(--teal-600);font-weight:600;text-decoration:none;}
-  .kpi-status{grid-template-columns:repeat(3,1fr);}
+  .kpi-status{grid-template-columns:repeat(4,1fr);}
 </style>
 </head>
 <body>
@@ -163,6 +172,16 @@
 <main id="mainArea"></main>
 
 <div id="toast" class="toast hide"></div>
+
+<div id="txnListModal" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2 id="txnListModalTitle">Transactions</h2>
+      <button class="btn sm secondary" id="txnListModalClose">Close ✕</button>
+    </div>
+    <div class="modal-body" id="txnListModalBody"></div>
+  </div>
+</div>
 
 <script>
 /* =========================================================
@@ -241,7 +260,7 @@ const REGIONS = [...new Set(STORES.map(s=>s.region))];
 // workflow level — Full Price Sale Return transactions are now tracked instead of
 // plain Credit Memo settlements (see import classification below).
 const CATEGORY_LABEL = {refund:'Refund Transactions', over30:'Returns Over 30 Days', fullprice:'Full Price Sale Return Transactions', discounted:'Discounted Sale Return Transactions'};
-const REASON_OPTIONS = ['Missing Component','Damage Product','Size Issue','Incorrect Charging','Quality Issue','Wrong product punched','Double bill punched','Other'];
+const REASON_OPTIONS = ['Missing Component','Damage Product','Size Issue','Incorrect Charging','Quality Issue','Wrong product punched','Double bill punched','Aggressive Customer','Cashier/Staff Mistake','Bill punched in wrong price','Customer need immediate Resolution','Online Customer Facilitate','Other'];
 
 // Sale Days windows — during one of these date ranges, a FULL PRICE return
 // is the compliance anomaly (everything sold was on discount, so a return
@@ -339,6 +358,45 @@ function baseTxn(t){
    STATE
    ========================================================= */
 let DATA = { transactions: [], auditLog: [], uploadLog: [], saleWindows: [], lastUploadTs: null };
+// Populated as a side effect of rendering HQ Dashboard or Admin's
+// Category-wise Summary — each holds the exact transaction list behind
+// one KPI box at the moment it was last drawn. Clicking a box reads from
+// here rather than recomputing, since the filter logic (date range,
+// region lock, category/status bucket) already lives inside those two
+// render functions and shouldn't be duplicated a third time just for the
+// popup. Only one of the two views is ever on screen at once, so
+// whichever rendered most recently is always the correct one to read.
+let kpiDrilldown = {};
+const KPI_LABELS = {
+  total:'Total Transactions',
+  signedoff:'Signed Off', notstarted:'Not Started', openitems:'Open Items (Awaiting Review + Re-Review)',
+  refund:'Refund Transactions', over30:'Return >30 Days Transactions',
+  fullprice:'Full Price Sale Return Transactions', discounted:'Discounted Sale Return Transactions',
+};
+function openKpiModal(key){
+  const txns = kpiDrilldown[key] || [];
+  document.getElementById('txnListModalTitle').textContent = `${KPI_LABELS[key]||key} — ${txns.length} transaction(s)`;
+  const rows = txns.slice().sort((a,b)=>a.date<b.date?1:-1).map(t=>`
+    <tr>
+      <td class="mono">${esc(t.transactionNumber)}</td>
+      <td>${esc(t.storeCode)}</td>
+      <td>${fmtDate(t.date)}</td>
+      <td>${esc(CATEGORY_LABEL[t.category]||t.category)}</td>
+      <td class="num-cell">${money(t.amount)}</td>
+      <td>${badge(t.status)}</td>
+    </tr>`).join('') || `<tr><td colspan="6" class="empty">No transactions in this bucket.</td></tr>`;
+  document.getElementById('txnListModalBody').innerHTML =
+    `<table class="compact-table"><thead><tr><th>Transaction No.</th><th>Store</th><th>Date</th><th>Category</th><th>Value</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+  document.getElementById('txnListModal').style.display = 'flex';
+}
+function closeKpiModal(){ document.getElementById('txnListModal').style.display = 'none'; }
+(function(){
+  const overlay = document.getElementById('txnListModal');
+  const closeBtn = document.getElementById('txnListModalClose');
+  if(closeBtn) closeBtn.onclick = closeKpiModal;
+  if(overlay) overlay.onclick = (e)=>{ if(e.target===overlay) closeKpiModal(); };
+  document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeKpiModal(); });
+})();
 let screen = 'hq'; // hq | store | cluster | regional | admin
 const OPEN_STORES = STORES.filter(s=>!s.closed);
 let storeAuth = { unlocked:false, storeCode: OPEN_STORES[0].code, password:'' };
@@ -876,7 +934,7 @@ function renderStoreCategoryTable(cat, rows, store){
     .concat(cat==='refund' ? ['Refund Amount'] : [])
     .concat(['Payment Method'])
     .concat(cat==='over30' ? ['Aging (days)'] : [])
-    .concat(['Price Type','Original Transaction','Also Matches','Is Approved by Manager','Reason for Return','Store Remarks','Status','Cluster Review','Cluster Manager Review 2']);
+    .concat(['Price Type','Original Transaction','Also Matches','Is Approved by Manager','Reason for Return','Store Remarks','Status','Cluster Review','Cluster Manager Review 2','Submit']);
 
   const lines = flattenToLines(rows);
 
@@ -897,7 +955,12 @@ function renderStoreCategoryTable(cat, rows, store){
       <td>${esc(priceTypeLine)}</td>
       <td class="mono">${esc(t.origTransaction||'—')}</td>
       <td>${idx!==0 ? '' : riskFlagCell(t)}</td>
-      <td>${idx!==0 ? '' : (editable ? `<input type="checkbox" data-approve="${t.id}" ${t.storeApproval?'checked':''}>` : (t.storeApproval? '✓':'—'))}</td>
+      <td>${idx!==0 ? '' : (editable
+          ? `<select data-approve="${t.id}">
+               <option value="yes" ${t.storeApproval?'selected':''}>Yes</option>
+               <option value="no" ${!t.storeApproval?'selected':''}>No</option>
+             </select>`
+          : (t.storeApproval? 'Yes':'No'))}</td>
       <td style="min-width:170px;">${idx!==0 ? '' : reasonCell(t, editable)}</td>
       <td style="min-width:200px;">${idx!==0 ? '' : (
         editable
@@ -909,6 +972,7 @@ function renderStoreCategoryTable(cat, rows, store){
       <td>${idx!==0 ? '' : (badge(t.status)+(respondable?`<div style="margin-top:6px;"><button class="btn sm" data-resubmit="${t.id}">Resubmit</button></div>`:''))}</td>
       <td style="min-width:160px;">${idx!==0 ? '' : reviewRoundCell(t,1)}</td>
       <td style="min-width:160px;">${idx!==0 ? '' : reviewRoundCell(t,2)}</td>
+      <td>${idx!==0 ? '' : (editable ? `<button class="btn sm" data-submitone="${t.id}">Submit</button>` : '')}</td>
     </tr>`;
   }).join('') : `<tr><td colspan="${cols.length}" class="empty">No transactions in this category.</td></tr>`;
 
@@ -1209,6 +1273,16 @@ function clusterKpiRow(mgr, stores, txns){
   const c = cat => { const ts = txns.filter(t=>t.category===cat); return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)}; };
   const refund=c('refund'), over30=c('over30'), fullprice=c('fullprice'), discounted=c('discounted');
   const bucket = b => txns.filter(t=>statusBucket(t.status)===b).length;
+  // Completion % is based on the REVIEWABLE workflow only — Signed Off /
+  // (Signed Off + Not Started + Open Items) — deliberately excluding
+  // 'No Action Needed' transactions (Full Price on a regular day,
+  // Discounted during a sale). Those were never part of anyone's review
+  // queue, so counting them would understate or inflate completion
+  // depending on how many of them happen to exist that period, for a
+  // reason that has nothing to do with how much work is actually done.
+  const signedOff = bucket('Signed Off'), notStarted = bucket('Not Started'), openItems = bucket('Open Items');
+  const reviewable = signedOff + notStarted + openItems;
+  const completionPct = reviewable>0 ? Math.round(signedOff/reviewable*100) : null;
   return `<tr>
     <td>${esc(mgr)}</td>
     <td class="num-cell">${stores.length}</td>
@@ -1216,12 +1290,13 @@ function clusterKpiRow(mgr, stores, txns){
     <td class="num-cell">${over30.count}</td><td class="num-cell">${money(over30.amt)}</td>
     <td class="num-cell">${fullprice.count}</td><td class="num-cell">${money(fullprice.amt)}</td>
     <td class="num-cell">${discounted.count}</td><td class="num-cell">${money(discounted.amt)}</td>
-    <td class="num-cell">${bucket('Signed Off')}</td>
-    <td class="num-cell">${bucket('Not Started')}</td>
-    <td class="num-cell">${bucket('Open Items')}</td>
+    <td class="num-cell">${signedOff}</td>
+    <td class="num-cell">${notStarted}</td>
+    <td class="num-cell">${openItems}</td>
+    <td class="num-cell">${completionPct==null ? '—' : completionPct+'%'}</td>
   </tr>`;
 }
-const CLUSTER_TABLE_HEAD = `<tr><th>Cluster Manager</th><th>Stores</th><th>Refund Txns</th><th>Refund Amt</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Amt</th><th>Full Price Return Txns</th><th>Full Price Return Amt</th><th>Discounted Return Txns</th><th>Discounted Return Amt</th><th>Signed Off</th><th>Not Started</th><th>Open Items</th></tr>`;
+const CLUSTER_TABLE_HEAD = `<tr><th>Cluster Manager</th><th>Stores</th><th>Refund Txns</th><th>Refund Amt</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Amt</th><th>Full Price Return Txns</th><th>Full Price Return Amt</th><th>Discounted Return Txns</th><th>Discounted Return Amt</th><th>Signed Off</th><th>Not Started</th><th>Open Items</th><th>Completion %</th></tr>`;
 
 function renderRegionalView(){
   const region = ctx.region;
@@ -1322,6 +1397,16 @@ function renderHQView(){
     return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)};
   };
   const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice'), discounted=catKpi('discounted');
+  kpiDrilldown = {
+    total: filtered,
+    signedoff: filtered.filter(t=>statusBucket(t.status)==='Signed Off'),
+    notstarted: filtered.filter(t=>statusBucket(t.status)==='Not Started'),
+    openitems: filtered.filter(t=>statusBucket(t.status)==='Open Items'),
+    refund: filtered.filter(t=>t.category==='refund'),
+    over30: filtered.filter(t=>t.category==='over30'),
+    fullprice: filtered.filter(t=>t.category==='fullprice'),
+    discounted: filtered.filter(t=>t.category==='discounted'),
+  };
 
   const regionsInScope = f.region==='all' ? REGIONS : [f.region];
   // Unassigned (closed-store placeholder) is not a real cluster manager and
@@ -1351,15 +1436,16 @@ function renderHQView(){
     ${(f.dateFrom||f.dateTo) ? `<div class="locked-note" style="margin:4px 0 12px;">Showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}. Leave both blank for the full cumulative total across every day loaded.</div>` : `<div class="locked-note" style="margin:4px 0 12px;">Showing the full cumulative total across every day currently loaded. Set a From/To date above to narrow it.</div>`}
 
     <div class="grid kpi-status">
-      <div class="kpi"><div class="num">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
-      <div class="kpi"><div class="num">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
-      <div class="kpi"><div class="num">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
+      <div class="kpi" data-kpi="total"><div class="num">${filtered.length}</div><div class="lbl">Total Transactions</div></div>
+      <div class="kpi status-done" data-kpi="signedoff"><div class="num">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
+      <div class="kpi status-pending" data-kpi="notstarted"><div class="num">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
+      <div class="kpi status-pending" data-kpi="openitems"><div class="num">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
     </div>
     <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);">
-      <div class="kpi accent"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
-      <div class="kpi accent"><div class="num">${over30.count}</div><div class="lbl">Return &gt;30 Days Transactions · Qty ${over30.qty} · ${money(over30.amt)}</div></div>
-      <div class="kpi accent"><div class="num">${fullprice.count}</div><div class="lbl">Full Price Sale Return Transactions · Qty (distinct) ${fullprice.count} · ${money(fullprice.amt)}</div></div>
-      <div class="kpi accent"><div class="num">${discounted.count}</div><div class="lbl">Discounted Sale Return Transactions · Qty ${discounted.qty} · ${money(discounted.amt)}</div></div>
+      <div class="kpi accent" data-kpi="refund"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
+      <div class="kpi accent" data-kpi="over30"><div class="num">${over30.count}</div><div class="lbl">Return &gt;30 Days Transactions · Qty ${over30.qty} · ${money(over30.amt)}</div></div>
+      <div class="kpi accent" data-kpi="fullprice"><div class="num">${fullprice.count}</div><div class="lbl">Full Price Sale Return Transactions · Qty (distinct) ${fullprice.count} · ${money(fullprice.amt)}</div></div>
+      <div class="kpi accent" data-kpi="discounted"><div class="num">${discounted.count}</div><div class="lbl">Discounted Sale Return Transactions · Qty ${discounted.qty} · ${money(discounted.amt)}</div></div>
     </div>
 
     <div class="card">
@@ -1417,20 +1503,31 @@ function renderCategorySummaryCard(txns, scopeLabel){
     return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)};
   };
   const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice'), discounted=catKpi('discounted');
+  kpiDrilldown = {
+    total: visible,
+    signedoff: visible.filter(t=>statusBucket(t.status)==='Signed Off'),
+    notstarted: visible.filter(t=>statusBucket(t.status)==='Not Started'),
+    openitems: visible.filter(t=>statusBucket(t.status)==='Open Items'),
+    refund: visible.filter(t=>t.category==='refund'),
+    over30: visible.filter(t=>t.category==='over30'),
+    fullprice: visible.filter(t=>t.category==='fullprice'),
+    discounted: visible.filter(t=>t.category==='discounted'),
+  };
   return `
     <div class="card">
       <div class="card-head"><h2>Category-wise Summary</h2><span class="count">${esc(scopeLabel)}</span></div>
       <div class="card-body">
         <div class="grid kpi-status">
-          <div class="kpi"><div class="num">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
-          <div class="kpi"><div class="num">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
-          <div class="kpi"><div class="num">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
+          <div class="kpi" data-kpi="total"><div class="num">${visible.length}</div><div class="lbl">Total Transactions</div></div>
+          <div class="kpi status-done" data-kpi="signedoff"><div class="num">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
+          <div class="kpi status-pending" data-kpi="notstarted"><div class="num">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
+          <div class="kpi status-pending" data-kpi="openitems"><div class="num">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
         </div>
         <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);">
-          <div class="kpi accent"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
-          <div class="kpi accent"><div class="num">${over30.count}</div><div class="lbl">Return &gt;30 Days Transactions · Qty ${over30.qty} · ${money(over30.amt)}</div></div>
-          <div class="kpi accent"><div class="num">${fullprice.count}</div><div class="lbl">Full Price Sale Return Transactions · Qty ${fullprice.qty} · ${money(fullprice.amt)}</div></div>
-          <div class="kpi accent"><div class="num">${discounted.count}</div><div class="lbl">Discounted Sale Return Transactions · Qty ${discounted.qty} · ${money(discounted.amt)}</div></div>
+          <div class="kpi accent" data-kpi="refund"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
+          <div class="kpi accent" data-kpi="over30"><div class="num">${over30.count}</div><div class="lbl">Return &gt;30 Days Transactions · Qty ${over30.qty} · ${money(over30.amt)}</div></div>
+          <div class="kpi accent" data-kpi="fullprice"><div class="num">${fullprice.count}</div><div class="lbl">Full Price Sale Return Transactions · Qty ${fullprice.qty} · ${money(fullprice.amt)}</div></div>
+          <div class="kpi accent" data-kpi="discounted"><div class="num">${discounted.count}</div><div class="lbl">Discounted Sale Return Transactions · Qty ${discounted.qty} · ${money(discounted.amt)}</div></div>
         </div>
       </div>
     </div>`;
@@ -1570,16 +1667,22 @@ function renderAuditTrailBody(){
    EVENT HANDLERS
    ========================================================= */
 function bindDynamicHandlers(){
+  document.querySelectorAll('[data-kpi]').forEach(el=>{
+    el.onclick = ()=>openKpiModal(el.dataset.kpi);
+  });
   // Store: approval checkbox — updates the submit button's enabled state
   // live, WITHOUT a full re-render, so any remarks being typed in other
   // rows are never wiped out by the checkbox click.
   document.querySelectorAll('[data-approve]').forEach(el=>{
     el.onchange = ()=>{
       const t = DATA.transactions.find(x=>x.id===el.dataset.approve);
-      t.storeApproval = el.checked;
+      t.storeApproval = el.value==='yes';
       persistQuiet(t);
       updateSubmitButtonState();
     };
+  });
+  document.querySelectorAll('[data-submitone]').forEach(el=>{
+    el.onclick = ()=>submitSingleTxn(el.dataset.submitone);
   });
   // Store: remarks (draft) / respond (re-review). Saved to the in-memory
   // model on every keystroke (not just on blur) so remarks are never lost
@@ -1831,8 +1934,7 @@ function updateSubmitButtonState(){
 // Only transactions ticked "Is Approved by Manager" move forward — an
 // unapproved draft stays at the store for further action instead of being
 // silently pushed into Cluster Review.
-async function submitStoreDrafts(storeCode){
-  const drafts = DATA.transactions.filter(t=>t.storeCode===storeCode && t.status==='Not Submitted' && t.storeApproval);
+async function submitStoreDrafts(storeCode){  const drafts = DATA.transactions.filter(t=>t.storeCode===storeCode && t.status==='Not Submitted' && t.storeApproval);
   if(!drafts.length){ showToast('No approved draft transactions to submit.'); return; }
   const missingReason = drafts.filter(t=>!t.reason || (t.reason==='Other' && !t.reasonRemarks.trim()));
   if(missingReason.length){
@@ -1850,6 +1952,27 @@ async function submitStoreDrafts(storeCode){
   });
   await patchTransactions(drafts, auditEntries);
   showToast(`${drafts.length} approved transaction(s) submitted and locked for Cluster Review.`);
+  render();
+}
+
+// Submits ONE transaction immediately, without touching any other draft —
+// same validation as the bulk Submit button (must be marked Yes, must
+// have a Reason selected, and remarks if that reason is "Other").
+async function submitSingleTxn(id){
+  const t = DATA.transactions.find(x=>x.id===id);
+  if(!t || t.status!=='Not Submitted') return;
+  if(!t.storeApproval){ showToast('Set "Is Approved by Manager" to Yes before submitting.', 4000); return; }
+  if(!t.reason || (t.reason==='Other' && !t.reasonRemarks.trim())){
+    showToast('Select a Reason for Return (and remarks for "Other") before submitting.', 4000);
+    return;
+  }
+  t.status='Awaiting Review';
+  t.submittedDate = t.date;
+  t.lastUpdated = new Date().toISOString();
+  t.lastUpdatedBy = 'Store Manager';
+  const auditEntry = addAudit({user:'Store Manager', role:'Store', action:'Store Submitted', transaction:t.transactionNumber, prevStatus:'Not Submitted', newStatus:'Awaiting Review', remarks:t.storeRemarks});
+  await patchTransactions([t], [auditEntry]);
+  showToast(`${t.transactionNumber} submitted and locked for Cluster Review.`);
   render();
 }
 
