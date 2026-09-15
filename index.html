@@ -184,6 +184,9 @@
 </header>
 
 <nav class="tabs" id="tabBar"></nav>
+<div id="offlineBanner" style="display:none;background:var(--red-bg);color:var(--red);font-size:13px;font-weight:600;padding:8px 20px;text-align:center;">
+  ⚠ Could not reach the live backend — showing empty offline data, not your real transactions. Refresh the page to try again.
+</div>
 
 <main id="mainArea"></main>
 
@@ -374,6 +377,11 @@ function baseTxn(t){
    STATE
    ========================================================= */
 let DATA = { transactions: [], auditLog: [], uploadLog: [], saleWindows: [], lastUploadTs: null };
+// False whenever DATA is the offline empty-seed fallback rather than a
+// real response from the backend — drives a visible banner in render()
+// so that state is never mistaken for "the dashboard has no data,"
+// which is what a silent fallback used to look like.
+let dataIsLive = true;
 // Populated as a side effect of rendering HQ Dashboard or Admin's
 // Category-wise Summary — each holds the exact transaction list behind
 // one KPI box at the moment it was last drawn. Clicking a box reads from
@@ -439,97 +447,101 @@ let regionalAuth = { unlocked:false, region: REGIONS[0] };
    STORAGE — Google Apps Script Web App is now the source of
    truth (Google Sheet "DataStore" tab). See Code.gs.
    ========================================================= */
-// Apps Script Web Apps have real cold-start latency (a fresh execution
-// container has to bind the Spreadsheet before it can answer), and that
-// latency spikes exactly when many people load/log in at once (shift
-// start). A single fetch with no timeout and no retry treats a slow
-// cold start identically to a truly dead backend — this wrapper gives
-// slow-but-alive requests a real chance before we give up on them.
-async function fetchWithRetry(url, options, {retries=2, timeoutMs=15000, baseDelayMs=1500}={}){
-  let lastErr = null;
-  for(let attempt=0; attempt<=retries; attempt++){
-    const controller = new AbortController();
-    const timer = setTimeout(()=>controller.abort(), timeoutMs);
-    try{
-      const res = await fetch(url, Object.assign({}, options, { signal: controller.signal }));
-      clearTimeout(timer);
-      return res;
-    }catch(e){
-      clearTimeout(timer);
-      lastErr = e;
-      if(attempt<retries) await new Promise(r=>setTimeout(r, baseDelayMs*(attempt+1)));
-    }
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+// Apps Script Web Apps can be genuinely slow or fail outright on the
+// FIRST request after being idle for a while ("cold start") — this is a
+// Google infrastructure characteristic, not a bug in this code, but
+// without a retry it looks exactly like a real failure: the very first
+// page load (or the very first login attempt) can fail even with
+// perfectly correct credentials and a healthy backend, then succeed a
+// few seconds later with nothing having changed. Retrying automatically,
+// silently, before ever telling the user something is wrong, is what
+// actually fixes that — not asking them to keep trying manually.
+async function withRetry(fn, attempts=3, delays=[800,1800,3000]){
+  for(let i=0;i<attempts;i++){
+    const result = await fn();
+    if(result && result.ok) return result;
+    if(i<attempts-1) await sleep(delays[i]||3000);
   }
-  throw lastErr;
+  return fn(); // final attempt's real result/error, whatever it is
 }
-// Two different retry budgets on purpose. The FIRST-EVER load of the
-// page has nothing on screen yet, so it's worth waiting through the
-// full cold-start window (3 attempts, up to ~50s worst case) rather
-// than giving up into a blank seed. Every OTHER call to this function
-// happens while the app is already showing real data (post-login
-// refresh, manual refresh, the 60s auto-refresh) — for those, a long
-// hang is worse than a quick, clearly-communicated failure the user
-// can immediately retry, especially stacked right after a login call
-// that may have already burned its own ~50s on a dead backend.
-const INITIAL_LOAD_RETRY_OPTS = { retries:2, timeoutMs:15000, baseDelayMs:1500 }; // ~50s worst case
-const REFRESH_RETRY_OPTS      = { retries:1, timeoutMs:8000,  baseDelayMs:1000 }; // ~17s worst case
-async function fetchDataFromBackend(retryOpts){
-  try{
-    // cache:'no-store' + a timestamp query param stop the browser from
-    // silently replaying a cached response on refresh instead of actually
-    // asking Apps Script again.
-    const res = await fetchWithRetry(APPS_SCRIPT_URL + '?action=load&_=' + Date.now(), { cache:'no-store' }, retryOpts || INITIAL_LOAD_RETRY_OPTS);
-    const json = await res.json();
-    if(json && json.ok) return json.data;
-    showToast('Backend returned an error loading data.', 5000);
-  }catch(e){
-    showToast('Could not reach the backend after retrying — check APPS_SCRIPT_URL or your connection. ('+(e.message||e)+')', 7000);
-  }
+
+async function fetchDataFromBackend(){
+  const attempt = async ()=>{
+    try{
+      // cache:'no-store' + a timestamp query param stop the browser from
+      // silently replaying a cached response on refresh instead of actually
+      // asking Apps Script again.
+      const res = await fetch(APPS_SCRIPT_URL + '?action=load&_=' + Date.now(), { cache:'no-store' });
+      const json = await res.json();
+      if(json && json.ok) return { ok:true, data: json.data };
+      return { ok:false, error:'Backend returned an error loading data.' };
+    }catch(e){
+      return { ok:false, error:'Could not reach the backend — check APPS_SCRIPT_URL. ('+(e.message||e)+')' };
+    }
+  };
+  const result = await withRetry(attempt);
+  if(result.ok) return result.data;
+  showToast(result.error, 6000);
   return null;
 }
 async function loadData(){
   const data = await fetchDataFromBackend();
-  if(data) return data;
+  if(data){ dataIsLive = true; return data; }
   // Empty-seed fallback is only appropriate on the very first load, when
   // there's no existing dashboard state to protect. See the auto-refresh
   // handler below for why a failed refresh must NOT reach this path.
-  // NOTE: this seed is intentionally marked so the login gate can warn
-  // that data may be stale/incomplete rather than silently presenting
-  // an empty dashboard as if it were real — see backendUnreachable flag.
-  backendUnreachable = true;
+  // dataIsLive=false drives the red "offline / not live" banner in
+  // render() — this fallback must NEVER be silently indistinguishable
+  // from real data again; that silence is exactly what made a cold-start
+  // failure look like "the dashboard wiped my data."
+  dataIsLive = false;
   return { transactions: makeSeedTransactions(), auditLog: [
     {timestamp:new Date().toISOString(), user:'System', role:'System', action:'Backend unreachable — showing empty local state', transaction:'—', prevStatus:'—', newStatus:'—', remarks:''}
   ], uploadLog: [], saleWindows: [
     { id:'SW00001', start:'2026-09-02', end:'2026-09-06', note:'September 2026 Sale Days (offline fallback default)', addedBy:'System', addedOn:new Date().toISOString() }
   ], lastUploadTs: null };
 }
-let backendUnreachable = false;
 // Server-side login: password ONLY. The backend scans the Credentials
 // sheet for EVERY row matching this password — a person can legitimately
 // hold more than one role under one code (Regional Manager who is also
 // Cluster Manager of their own cluster) — and tells us all of them.
-// Returns one of three distinct outcomes so the caller never has to
-// guess: {ok:true, matches:[...]} on a genuine match, {ok:false} on a
-// genuine "no such password" from the server, or {networkError:true}
-// when we never got a real answer at all. Collapsing the last case into
-// "incorrect password" is what was training people to think their
-// password was wrong when the backend had simply not responded yet —
-// retyping the SAME correct password on attempt 2 or 3 then "worked"
-// only because the backend had warmed up by then, not because anything
-// about the input changed.
+// Returns {ok:true, matches} on success, {ok:false, wrongPassword:true}
+// for a genuine bad password, or {ok:false, error} for anything else
+// (network/server failure) — the gate handler needs to tell these apart
+// so "your password is fine, the server just hiccuped" never gets shown
+// to someone as "incorrect password," which wastes their time re-typing
+// something that was never wrong.
 async function verifyPasswordLogin(password){
-  try{
-    const res = await fetchWithRetry(APPS_SCRIPT_URL, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify({ action:'loginByPassword', secret: SHARED_SECRET, password })
-    });
-    const json = await res.json();
-    if(json && json.ok && json.matches && json.matches.length) return { ok:true, matches: json.matches };
-    return { ok:false };
-  }catch(e){
-    return { networkError:true, message: e.message||String(e) };
-  }
+  const attempt = async ()=>{
+    try{
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method:'POST',
+        headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body: JSON.stringify({ action:'loginByPassword', secret: SHARED_SECRET, password })
+      });
+      const json = await res.json();
+      if(json && json.ok && json.matches && json.matches.length) return { ok:true, matches: json.matches };
+      // A clean "no match" response is {ok:false} with NO error field —
+      // that's the backend cleanly saying "this password matches
+      // nothing," and retrying won't change a deterministic no. Anything
+      // with an `error` field (or a malformed response) is the OTHER
+      // case — a genuine server-side exception — and gets treated as
+      // retryable below, NOT as a wrong password. Conflating these two
+      // was the actual bug: a real server hiccup was being shown to
+      // people as "incorrect password" even when they'd typed it right.
+      if(json && json.ok===false && !json.error) return { ok:true, wrongPassword:true };
+      return { ok:false, error: (json&&json.error) || 'Server returned an unexpected response.' };
+    }catch(e){
+      return { ok:false, error:'Could not reach the backend to verify login. ('+(e.message||e)+')' };
+    }
+  };
+  const result = await withRetry(attempt);
+  if(result.wrongPassword) return { matches:null, wrongPassword:true };
+  if(result.ok) return { matches: result.matches };
+  showToast(result.error, 6000);
+  return { matches:null, wrongPassword:false };
 }
 // How many saves are currently in flight. Every save site below now
 // AWAITS this instead of firing it and moving on — previously the app
@@ -673,7 +685,7 @@ async function addSaleWindowRemote(start, end, note){
     // Re-pull from server rather than guessing the new ID locally — this
     // table is small and rarely changed, so the extra round trip is cheap
     // and guarantees the ID shown matches what's actually on the Sheet.
-    const fresh = await fetchDataFromBackend(REFRESH_RETRY_OPTS);
+    const fresh = await fetchDataFromBackend();
     if(fresh) DATA.saleWindows = fresh.saleWindows;
     showToast('Sale window added.');
     render();
@@ -848,6 +860,8 @@ function render(){
   const main = document.getElementById('mainArea');
   const tabBar = document.getElementById('tabBar');
   const logoutBtn = document.getElementById('logoutBtn');
+  const offlineBanner = document.getElementById('offlineBanner');
+  if(offlineBanner) offlineBanner.style.display = dataIsLive ? 'none' : 'block';
   if(!isLoggedIn()){
     tabBar.innerHTML = '';
     logoutBtn.style.display = 'none';
@@ -1907,22 +1921,18 @@ function bindDynamicHandlers(){
       const pass = gatePassInput.value;
       if(!pass){ showToast('Enter your access code.'); return; }
       gateUnlockBtn.disabled = true; gateUnlockBtn.textContent = 'Checking...';
-      const result = await verifyPasswordLogin(pass);
-      if(result.networkError){
+      const { matches, wrongPassword } = await verifyPasswordLogin(pass);
+      if(!matches){
         gateUnlockBtn.disabled = false; gateUnlockBtn.textContent = 'Unlock';
-        // Never tell someone their password is wrong when we don't
-        // actually know that yet — this is a connectivity failure, not
-        // a credential failure, and the two need different reactions
-        // from the user (wait/retry vs. re-type the password).
-        showToast('Could not reach the server to verify your access code. Please check your connection and tap Unlock again.', 7000);
+        // Only say "incorrect" when the backend actually said so cleanly.
+        // Anything else (network blip, cold start, server error) gets its
+        // own accurate message from verifyPasswordLogin itself — telling
+        // someone their CORRECT password is "incorrect" just because the
+        // server hiccuped wastes their time re-typing something that was
+        // never wrong in the first place.
+        if(wrongPassword) showToast('Incorrect access code.');
         return;
       }
-      if(!result.ok){
-        gateUnlockBtn.disabled = false; gateUnlockBtn.textContent = 'Unlock';
-        showToast('Incorrect access code.');
-        return;
-      }
-      const matches = result.matches;
       // Unlock EVERY role this password matched — a dual-role person
       // (e.g. Regional Manager who is also Cluster Manager of their own
       // cluster) gets both sets of rights, not just one. permittedTabs()
@@ -1942,23 +1952,19 @@ function bindDynamicHandlers(){
       // unlocked role's tab is still reachable from the nav bar — this
       // only decides what's showing the moment you log in.
       screen = adminAuth.unlocked ? 'hq' : regionalAuth.unlocked ? 'hq' : clusterAuth.unlocked ? 'cluster' : storeAuth.unlocked ? 'store' : 'hq';
-      // The page's initial DATA load happened before this login attempt
-      // (possibly during the same cold-start slowness that made login
-      // slow) — if THAT load silently fell back to the empty seed, the
-      // dashboard would render blank even though login just succeeded.
-      // Re-pull now that we know the backend is reachable and awake, so
-      // "login accepted but everything is blank" cannot happen — the
-      // user sees a normal loading state instead of an empty dashboard.
-      gateUnlockBtn.textContent = 'Loading data...';
-      // Light budget: verifyPasswordLogin above just proved the backend
-      // is reachable and awake, so this refresh doesn't need to pay the
-      // full cold-start allowance again — stacking two full budgets is
-      // what could turn a dead backend into a ~99s silent freeze here.
-      const fresh = await fetchDataFromBackend(REFRESH_RETRY_OPTS);
-      if(fresh){ DATA = fresh; lastLoadedTs = new Date().toISOString(); backendUnreachable = false; }
+      // Re-fetch fresh data at the MOMENT of login, not just once at page
+      // open. The page's very first load (init(), before anyone logs in)
+      // can silently land on the empty offline fallback if the backend was
+      // slow to wake up — the login screen looks completely normal either
+      // way, since it doesn't depend on DATA at all, so a real, correct
+      // login could previously go straight through to an empty dashboard
+      // with no visible reason why. This makes a successful login always
+      // double-check it actually has real data before showing anything.
+      gateUnlockBtn.textContent = 'Loading your data...';
+      const fresh = await fetchDataFromBackend();
+      if(fresh){ DATA = fresh; dataIsLive = true; }
       gateUnlockBtn.disabled = false; gateUnlockBtn.textContent = 'Unlock';
       render();
-      if(!fresh) showToast('Logged in, but the latest data could not be loaded yet. Tap ↻ Refresh once your connection is stable.', 8000);
     };
   }
   if(gatePassInput) gatePassInput.onkeydown = (e)=>{ if(e.key==='Enter') gateUnlockBtn.click(); };
@@ -1966,7 +1972,7 @@ function bindDynamicHandlers(){
   const manualRefreshBtn = document.getElementById('manualRefreshBtn');
   if(manualRefreshBtn) manualRefreshBtn.onclick = async ()=>{
     manualRefreshBtn.disabled = true; manualRefreshBtn.textContent = 'Refreshing...';
-    const fresh = await fetchDataFromBackend(REFRESH_RETRY_OPTS);
+    const fresh = await fetchDataFromBackend();
     manualRefreshBtn.disabled = false; manualRefreshBtn.textContent = '↻ Refresh';
     if(fresh){
       DATA = fresh;
@@ -2530,10 +2536,8 @@ setInterval(async ()=>{
     if(!editingActive){
       // A failed refresh keeps showing the last successfully loaded DATA
       // instead of wiping the screen — a transient network blip must never
-      // look like the data was deleted. Light budget: this runs every 60s
-      // in the background, so a quick fail-and-retry-next-cycle beats a
-      // long hang that could bump into the following tick.
-      const fresh = await fetchDataFromBackend(REFRESH_RETRY_OPTS);
+      // look like the data was deleted.
+      const fresh = await fetchDataFromBackend();
       if(fresh){
         DATA = fresh;
         lastLoadedTs = new Date().toISOString();
