@@ -394,12 +394,19 @@ let kpiDrilldown = {};
 const KPI_LABELS = {
   total:'Total Transactions',
   signedoff:'Signed Off', notstarted:'Not Started', openitems:'Open Items (Awaiting Review + Re-Review)',
+  noactionneeded:'No Action Needed (View Only)',
   refund:'Refund Transactions', over30:'Return >30 Days Transactions',
   fullprice:'Full Price Sale Return Transactions', discounted:'Discounted Sale Return Transactions',
 };
 function openKpiModal(key){
   const txns = kpiDrilldown[key] || [];
-  document.getElementById('txnListModalTitle').textContent = `${KPI_LABELS[key]||key} — ${txns.length} transaction(s)`;
+  renderTxnListInModal(`${KPI_LABELS[key]||key} — ${txns.length} transaction(s)`, txns);
+  document.getElementById('txnListModal').style.display = 'flex';
+}
+let currentModalTxns = [];
+function renderTxnListInModal(title, txns){
+  document.getElementById('txnListModalTitle').textContent = title;
+  currentModalTxns = txns; // for CSV export — see exportModalCsv
   const rows = txns.slice().sort((a,b)=>a.date<b.date?1:-1).map(t=>`
     <tr>
       <td class="mono">${esc(t.transactionNumber)}</td>
@@ -408,10 +415,82 @@ function openKpiModal(key){
       <td>${esc(CATEGORY_LABEL[t.category]||t.category)}</td>
       <td class="num-cell">${money(t.amount)}</td>
       <td>${badge(t.status)}</td>
-    </tr>`).join('') || `<tr><td colspan="6" class="empty">No transactions in this bucket.</td></tr>`;
+      <td><button class="btn sm secondary" data-viewtxndetail="${t.id}">View</button></td>
+    </tr>`).join('') || `<tr><td colspan="7" class="empty">No transactions in this bucket.</td></tr>`;
   document.getElementById('txnListModalBody').innerHTML =
-    `<table class="compact-table"><thead><tr><th>Transaction No.</th><th>Store</th><th>Date</th><th>Category</th><th>Value</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
-  document.getElementById('txnListModal').style.display = 'flex';
+    `<div style="margin-bottom:10px;"><button class="btn sm secondary" id="exportModalCsvBtn">Export CSV</button></div>
+     <table class="compact-table"><thead><tr><th>Transaction No.</th><th>Store</th><th>Date</th><th>Category</th><th>Value</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  document.querySelectorAll('[data-viewtxndetail]').forEach(b=>{
+    b.onclick = ()=>openTxnDetailInModal(b.dataset.viewtxndetail, title, txns);
+  });
+  const exportBtn = document.getElementById('exportModalCsvBtn');
+  if(exportBtn) exportBtn.onclick = ()=>exportTxnsCsv(title, currentModalTxns);
+}
+// Plain client-side CSV — no library needed for a flat transaction list.
+// Quotes every field and doubles internal quotes per RFC 4180 so a
+// remark containing a comma or a quote doesn't corrupt the file.
+function exportTxnsCsv(title, txns){
+  const cols = ['Transaction No.','Store','Date','Category','Qty','Value','Status','Reason','Reason Remarks','Store Remarks'];
+  const csvEscape = v => '"' + String(v==null?'':v).replace(/"/g,'""') + '"';
+  const lines = [cols.map(csvEscape).join(',')];
+  txns.forEach(t=>{
+    lines.push([t.transactionNumber, t.storeCode, t.date, CATEGORY_LABEL[t.category]||t.category, t.qty, t.amount, t.status, t.reason||'', t.reasonRemarks||'', t.storeRemarks||''].map(csvEscape).join(','));
+  });
+  const blob = new Blob([lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = title.replace(/[^\w.-]+/g,'_').slice(0,80) + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+// Signed Off / No Action Needed transactions arrive from the main load
+// with their barcode/review-history detail deliberately withheld (see
+// ARCHIVED_STATUSES in Code.gs) — this fetches it on demand, only for
+// the one transaction someone actually clicked into, instead of every
+// transaction carrying that weight on every page load whether anyone
+// looks at it or not. backLabel/backTxns let the modal return to
+// whatever list it was opened from.
+async function openTxnDetailInModal(id, backLabel, backTxns){
+  const t = DATA.transactions.find(x=>x.id===id);
+  if(!t) return;
+  document.getElementById('txnListModalTitle').textContent = `${t.transactionNumber} — ${esc(t.storeCode)}`;
+  document.getElementById('txnListModalBody').innerHTML = `<p class="locked-note">Loading line-item detail…</p>`;
+  let barcodes = t.barcodes, reviewHistory = t.reviewHistory;
+  if(t.archived){
+    try{
+      const res = await fetch(APPS_SCRIPT_URL + '?action=detail&id=' + encodeURIComponent(id) + '&_=' + Date.now(), { cache:'no-store' });
+      const json = await res.json();
+      if(json && json.ok){ barcodes = json.barcodes; reviewHistory = json.reviewHistory; }
+      else { showToast((json&&json.error)||'Could not load transaction detail.', 5000); }
+    }catch(e){
+      showToast('Could not reach the backend to load detail. ('+(e.message||e)+')', 6000);
+    }
+  }
+  const barcodeRows = (barcodes||[]).map(b=>`
+    <tr><td class="mono">${esc(b.barcode)}</td><td class="num-cell">${b.qty}</td><td class="num-cell">${money(b.amount)}</td>
+    <td>${b.fullPrice===true?'Full Price':b.fullPrice===false?'Discounted':'—'}</td></tr>`).join('')
+    || `<tr><td colspan="4" class="empty">No line items.</td></tr>`;
+  const reviewRows = (reviewHistory||[]).map(r=>`
+    <tr><td>${r.round}</td><td>${esc(r.decision)}</td><td>${esc(r.by||'—')}</td><td>${fmtDateTime(r.date)}</td><td>${esc(r.remarks||'—')}</td></tr>`).join('')
+    || `<tr><td colspan="5" class="empty">No review rounds yet.</td></tr>`;
+  document.getElementById('txnListModalBody').innerHTML = `
+    <button class="btn sm secondary" id="txnDetailBackBtn" style="margin-bottom:12px;">← Back to list</button>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px;">
+      <div><span class="field-label">Store</span><div>${esc(t.storeCode)}</div></div>
+      <div><span class="field-label">Date</span><div>${fmtDate(t.date)}</div></div>
+      <div><span class="field-label">Category</span><div>${esc(CATEGORY_LABEL[t.category]||t.category)}</div></div>
+      <div><span class="field-label">Value</span><div>${money(t.amount)}</div></div>
+      <div><span class="field-label">Status</span><div>${badge(t.status)}</div></div>
+      <div><span class="field-label">Reason</span><div>${esc(t.reason||'—')}${t.reason==='Other'&&t.reasonRemarks?': '+esc(t.reasonRemarks):''}</div></div>
+    </div>
+    <h3 style="font-size:14px;margin:0 0 6px;">Line Items</h3>
+    <table class="compact-table" style="margin-bottom:16px;"><thead><tr><th>Barcode</th><th>Qty</th><th>Amount</th><th>Price Type</th></tr></thead><tbody>${barcodeRows}</tbody></table>
+    <h3 style="font-size:14px;margin:0 0 6px;">Review History</h3>
+    <table class="compact-table"><thead><tr><th>Round</th><th>Decision</th><th>By</th><th>Date</th><th>Remarks</th></tr></thead><tbody>${reviewRows}</tbody></table>
+  `;
+  const backBtn = document.getElementById('txnDetailBackBtn');
+  if(backBtn) backBtn.onclick = ()=>renderTxnListInModal(backLabel, backTxns);
 }
 function closeKpiModal(){ document.getElementById('txnListModal').style.display = 'none'; }
 (function(){
@@ -898,6 +977,8 @@ function logout(){
   clusterAuth = { unlocked:false, clusterManager: CLUSTER_MANAGERS[0], passcode:'' };
   regionalAuth = { unlocked:false, region: REGIONS[0] };
   adminAuth = { unlocked:false };
+  openStoreCategory = null;
+  clusterKpiVisible = false;
   screen = 'hq';
   render();
 }
@@ -923,6 +1004,17 @@ function renderPasswordGate(){
 /* =========================================================
    STORE VIEW
    ========================================================= */
+// Which Store Entry category table is currently open — null means none,
+// so nothing renders until the store clicks a button. Module-level (not
+// per-render) so it survives re-renders from other actions (checkbox
+// changes, remark saves) without snapping shut on every keystroke.
+let openStoreCategory = null;
+// Cluster Review's KPI grid (mirroring HQ/Admin) is hidden until the
+// Cluster Manager explicitly asks for it — "select a date range and
+// fetch" rather than it being computed and rendered on every visit to
+// the screen, per what was asked for.
+let clusterKpiVisible = false;
+
 function renderStoreView(){
   const store = storeByCode(storeAuth.storeCode);
   const mine = txnsFor(t=>t.storeCode===store.code);
@@ -932,14 +1024,18 @@ function renderStoreView(){
   const reReviewCount = mine.filter(t=>t.status==='Re-Review').length;
 
   const categories = ['over30','refund','fullprice','discounted'];
-  const tables = categories.map(cat=>{
-    // 'No Action Needed' transactions (Full Price on a regular day,
-    // Discounted during a sale) are visibility-only — see needsReview at
-    // import time — so they never appear here for the store to act on,
-    // only in the KPI/summary cards.
-    const rows = mine.filter(t=>t.category===cat && t.status!=='No Action Needed').sort((a,b)=>a.date<b.date?1:-1);
-    return renderStoreCategoryTable(cat, rows, store);
-  }).join('');
+  // 'No Action Needed' transactions (Full Price on a regular day,
+  // Discounted during a sale) are visibility-only — see needsReview at
+  // import time — so they never appear here for the store to act on,
+  // only in the KPI/summary cards.
+  const actionable = cat => mine.filter(t=>t.category===cat && t.status!=='No Action Needed');
+  const catButtons = categories.map(cat=>{
+    const n = actionable(cat).length;
+    return `<button class="btn sm ${openStoreCategory===cat?'':'secondary'}" data-showcat="${cat}">${esc(CATEGORY_LABEL[cat])} (${n})</button>`;
+  }).join(' ');
+  const openTable = openStoreCategory
+    ? renderStoreCategoryTable(openStoreCategory, actionable(openStoreCategory).sort((a,b)=>a.date<b.date?1:-1), store)
+    : `<p class="locked-note" style="padding:16px 0;">Select a category above to load its transactions. Nothing loads until you choose one.</p>`;
 
   return `
     <div class="session-bar">
@@ -960,7 +1056,8 @@ function renderStoreView(){
     </div>
     ${reReviewCount>0 ? `<div class="warn-box">${reReviewCount} transaction(s) sent back by the Cluster Manager for re-review — see remarks below and respond.</div>` : ''}
     <div class="note-box">Core transaction fields (Transaction, Items, Qty, Amount, Payment Method, Date, Barcodes) are populated from the Admin-uploaded Return Report and are always read-only here. Manager must tick "Is Approved by Manager" and add remarks before submitting a draft.</div>
-    ${tables}
+    <div style="margin:12px 0;display:flex;gap:8px;flex-wrap:wrap;">${catButtons}</div>
+    ${openTable}
   `;
 }
 
@@ -1139,7 +1236,16 @@ function classifyOtherRemark(text){
   return 'Uncategorized';
 }
 function renderReasonsCard(scopeTxns, scopeLabel){
-  const visible = scopeTxns.filter(t=>!isHiddenLowValueRefund(t));
+  // 'No Action Needed' transactions (Full Price on a regular day,
+  // Discounted during a sale — see needsReview at import time) never go
+  // through Store Entry and structurally never get a reason recorded —
+  // there was never a form asking for one. Counting them here made
+  // "Reason Not Recorded" balloon to several times the actual pending-
+  // submission count, since every view-only transaction landed in that
+  // bucket alongside the genuinely unrecorded ones. This card is about
+  // why ACTIONABLE returns happen, so view-only transactions are out of
+  // scope for it entirely, not just excluded from one bucket.
+  const visible = scopeTxns.filter(t=>!isHiddenLowValueRefund(t) && t.status!=='No Action Needed');
   const notSubmitted = visible.filter(t=>t.status==='Not Submitted').length;
   const counts = {};
   visible.forEach(t=>{
@@ -1249,6 +1355,44 @@ function renderMultiCriteriaCard(scopeTxns, scopeLabel){
     </div>`;
 }
 
+// Same KPI grid as HQ/Admin, reused here so Cluster Manager gets an
+// HQ-style view of their OWN cluster's data — gated behind the Fetch
+// button in renderClusterView, not shown automatically.
+function renderClusterKpiGrid(txns, scopeLabel){
+  const visible = txns.filter(t=>!isHiddenLowValueRefund(t));
+  const bucket = b => visible.filter(t=>statusBucket(t.status)===b).length;
+  const catKpi = cat=>{
+    const ts = visible.filter(t=>t.category===cat);
+    return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)};
+  };
+  const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice'), discounted=catKpi('discounted');
+  kpiDrilldown = {
+    total: visible,
+    signedoff: visible.filter(t=>statusBucket(t.status)==='Signed Off'),
+    notstarted: visible.filter(t=>statusBucket(t.status)==='Not Started'),
+    openitems: visible.filter(t=>statusBucket(t.status)==='Open Items'),
+    noactionneeded: visible.filter(t=>t.status==='No Action Needed'),
+    refund: visible.filter(t=>t.category==='refund'),
+    over30: visible.filter(t=>t.category==='over30'),
+    fullprice: visible.filter(t=>t.category==='fullprice'),
+    discounted: visible.filter(t=>t.category==='discounted'),
+  };
+  return `
+    <div class="grid kpi-status" style="grid-template-columns:repeat(5,1fr);">
+      <div class="kpi" data-kpi="total"><div class="num">${visible.length}</div><div class="lbl">Total Transactions</div></div>
+      <div class="kpi status-done" data-kpi="signedoff"><div class="num num-green">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
+      <div class="kpi status-pending" data-kpi="notstarted"><div class="num num-red">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
+      <div class="kpi status-pending" data-kpi="openitems"><div class="num num-red">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
+      <div class="kpi" data-kpi="noactionneeded"><div class="num">${bucket('No Action Needed')}</div><div class="lbl">No Action Needed (View Only)</div></div>
+    </div>
+    <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px;">
+      <div class="kpi accent" data-kpi="refund"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
+      <div class="kpi accent" data-kpi="over30"><div class="num">${over30.count}</div><div class="lbl">Return &gt;30 Days Transactions · Qty ${over30.qty} · ${money(over30.amt)}</div></div>
+      <div class="kpi accent" data-kpi="fullprice"><div class="num">${fullprice.count}</div><div class="lbl">Full Price Sale Return Transactions · Qty ${fullprice.qty} · ${money(fullprice.amt)}</div></div>
+      <div class="kpi accent" data-kpi="discounted"><div class="num">${discounted.count}</div><div class="lbl">Discounted Sale Return Transactions · Qty ${discounted.qty} · ${money(discounted.amt)}</div></div>
+    </div>`;
+}
+
 function renderClusterView(){
   const mgr = clusterAuth.clusterManager;
   const stores = STORES.filter(s=>s.clusterManager===mgr && !s.closed);
@@ -1317,6 +1461,11 @@ function renderClusterView(){
       <div><span class="field-label">To date</span><input type="date" id="cFDateTo" value="${f.dateTo||''}"></div>
       <div style="align-self:end;"><button class="btn sm secondary" id="cFClearBtn">Clear dates</button></div>
     </div>
+    <div style="margin:4px 0 14px;">
+      <button class="btn sm" id="clusterFetchKpiBtn">${clusterKpiVisible ? 'Refresh KPI Summary' : 'Fetch KPI Summary'}</button>
+      ${clusterKpiVisible ? `<button class="btn sm secondary" id="clusterHideKpiBtn" style="margin-left:8px;">Hide</button>` : ''}
+    </div>
+    ${clusterKpiVisible ? renderClusterKpiGrid(summaryScope, mgr) : ''}
     <div class="locked-note" style="margin:4px 0 12px;">${(f.dateFrom||f.dateTo) ? `Store Summary below is showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}.` : 'Store Summary below is the full cumulative total across every day currently loaded.'} The Review Queue always shows every pending item regardless of this filter.</div>
     <div class="card">
       <div class="card-head"><h2>Store Summary</h2></div>
@@ -1488,6 +1637,7 @@ function renderHQView(){
     signedoff: filtered.filter(t=>statusBucket(t.status)==='Signed Off'),
     notstarted: filtered.filter(t=>statusBucket(t.status)==='Not Started'),
     openitems: filtered.filter(t=>statusBucket(t.status)==='Open Items'),
+    noactionneeded: filtered.filter(t=>t.status==='No Action Needed'),
     refund: filtered.filter(t=>t.category==='refund'),
     over30: filtered.filter(t=>t.category==='over30'),
     fullprice: filtered.filter(t=>t.category==='fullprice'),
@@ -1521,11 +1671,12 @@ function renderHQView(){
     </div>
     ${(f.dateFrom||f.dateTo) ? `<div class="locked-note" style="margin:4px 0 12px;">Showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}. Leave both blank for the full cumulative total across every day loaded.</div>` : `<div class="locked-note" style="margin:4px 0 12px;">Showing the full cumulative total across every day currently loaded. Set a From/To date above to narrow it.</div>`}
 
-    <div class="grid kpi-status">
+    <div class="grid kpi-status" style="grid-template-columns:repeat(5,1fr);">
       <div class="kpi" data-kpi="total"><div class="num">${filtered.length}</div><div class="lbl">Total Transactions</div></div>
       <div class="kpi status-done" data-kpi="signedoff"><div class="num num-green">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
       <div class="kpi status-pending" data-kpi="notstarted"><div class="num num-red">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
       <div class="kpi status-pending" data-kpi="openitems"><div class="num num-red">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
+      <div class="kpi" data-kpi="noactionneeded"><div class="num">${bucket('No Action Needed')}</div><div class="lbl">No Action Needed (View Only)</div></div>
     </div>
     <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);">
       <div class="kpi accent" data-kpi="refund"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
@@ -1594,6 +1745,7 @@ function renderCategorySummaryCard(txns, scopeLabel){
     signedoff: visible.filter(t=>statusBucket(t.status)==='Signed Off'),
     notstarted: visible.filter(t=>statusBucket(t.status)==='Not Started'),
     openitems: visible.filter(t=>statusBucket(t.status)==='Open Items'),
+    noactionneeded: visible.filter(t=>t.status==='No Action Needed'),
     refund: visible.filter(t=>t.category==='refund'),
     over30: visible.filter(t=>t.category==='over30'),
     fullprice: visible.filter(t=>t.category==='fullprice'),
@@ -1603,11 +1755,12 @@ function renderCategorySummaryCard(txns, scopeLabel){
     <div class="card">
       <div class="card-head"><h2>Category-wise Summary</h2><span class="count">${esc(scopeLabel)}</span></div>
       <div class="card-body">
-        <div class="grid kpi-status">
+        <div class="grid kpi-status" style="grid-template-columns:repeat(5,1fr);">
           <div class="kpi" data-kpi="total"><div class="num">${visible.length}</div><div class="lbl">Total Transactions</div></div>
           <div class="kpi status-done" data-kpi="signedoff"><div class="num num-green">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
           <div class="kpi status-pending" data-kpi="notstarted"><div class="num num-red">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
           <div class="kpi status-pending" data-kpi="openitems"><div class="num num-red">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
+          <div class="kpi" data-kpi="noactionneeded"><div class="num">${bucket('No Action Needed')}</div><div class="lbl">No Action Needed (View Only)</div></div>
         </div>
         <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);">
           <div class="kpi accent" data-kpi="refund"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
@@ -1756,6 +1909,16 @@ function bindDynamicHandlers(){
   document.querySelectorAll('[data-kpi]').forEach(el=>{
     el.onclick = ()=>openKpiModal(el.dataset.kpi);
   });
+  document.querySelectorAll('[data-showcat]').forEach(el=>{
+    el.onclick = ()=>{
+      openStoreCategory = openStoreCategory===el.dataset.showcat ? null : el.dataset.showcat;
+      render();
+    };
+  });
+  const clusterFetchKpiBtn = document.getElementById('clusterFetchKpiBtn');
+  if(clusterFetchKpiBtn) clusterFetchKpiBtn.onclick = ()=>{ clusterKpiVisible = true; render(); };
+  const clusterHideKpiBtn = document.getElementById('clusterHideKpiBtn');
+  if(clusterHideKpiBtn) clusterHideKpiBtn.onclick = ()=>{ clusterKpiVisible = false; render(); };
   // Store: approval checkbox — updates the submit button's enabled state
   // live, WITHOUT a full re-render, so any remarks being typed in other
   // rows are never wiped out by the checkbox click.
