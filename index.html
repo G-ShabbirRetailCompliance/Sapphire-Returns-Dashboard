@@ -546,8 +546,30 @@ async function withRetry(fn, attempts=3, delays=[800,1800,3000]){
   return fn(); // final attempt's real result/error, whatever it is
 }
 
-async function fetchDataFromBackend(){
+// Fetches archived (Signed Off / No Action Needed) transactions matching
+// a date range and, optionally, a specific set of store codes — called
+// only from a "Fetch Data" button, never automatically. storeCodes null
+// means every store (Admin's all-stores view); an array scopes it to one
+// store, cluster, or region, computed by the caller from STORES.
+async function fetchArchivedTransactions(dateFrom, dateTo, storeCodes){
   const attempt = async ()=>{
+    try{
+      const params = new URLSearchParams({ action:'archived', dateFrom: dateFrom||'', dateTo: dateTo||'', _: Date.now() });
+      if(storeCodes && storeCodes.length) params.set('storeCodes', storeCodes.join(','));
+      const res = await fetch(APPS_SCRIPT_URL + '?' + params.toString(), { cache:'no-store' });
+      const json = await res.json();
+      if(json && json.ok) return { ok:true, transactions: json.transactions };
+      return { ok:false, error:(json&&json.error)||'Backend returned an error fetching archived data.' };
+    }catch(e){
+      return { ok:false, error:'Could not reach the backend to fetch archived data. ('+(e.message||e)+')' };
+    }
+  };
+  const result = await withRetry(attempt);
+  if(result.ok) return result.transactions;
+  showToast(result.error, 6000);
+  return null;
+}
+async function fetchDataFromBackend(){  const attempt = async ()=>{
     try{
       // cache:'no-store' + a timestamp query param stop the browser from
       // silently replaying a cached response on refresh instead of actually
@@ -695,7 +717,7 @@ async function saveUpload(newTxns, uploadLogEntry, auditEntry){
   return postAction('appendUpload', { transactions: newTxns, uploadLogEntry, auditEntry });
 }
 async function removeUpload(uploadId){
-  const batchTxns = DATA.transactions.filter(t=>t.uploadId===uploadId);
+  const batchTxns = DATA.transactions.concat(adminArchivedFetched).filter(t=>t.uploadId===uploadId);
   if(!batchTxns.length){ showToast('Nothing to remove — this upload has no transactions on file.'); return; }
   const dates = [...new Set(batchTxns.map(t=>t.date))].sort();
   const dateInput = dates.length>1
@@ -716,6 +738,7 @@ async function removeUpload(uploadId){
     // Drop only the matched ones locally so the screen updates without waiting on a reload.
     const removedIds = new Set(scoped.map(t=>t.id));
     DATA.transactions = DATA.transactions.filter(t=>!removedIds.has(t.id));
+    adminArchivedFetched = adminArchivedFetched.filter(t=>!removedIds.has(t.id));
     const log = DATA.uploadLog.find(u=>u.uploadId===uploadId);
     const anyLeft = DATA.transactions.some(t=>t.uploadId===uploadId);
     if(log) log.status = anyLeft ? 'Partially Removed' : 'Removed';
@@ -729,7 +752,7 @@ async function removeUpload(uploadId){
 // backend logs exactly what it deleted (ID/Txn No./Store/Status for every
 // row) into the Audit Trail BEFORE deleting, so the data isn't gone
 // without a trace even though the rows themselves are.
-async function forceRemoveUpload(uploadId){  const batchTxns = DATA.transactions.filter(t=>t.uploadId===uploadId);
+async function forceRemoveUpload(uploadId){  const batchTxns = DATA.transactions.concat(adminArchivedFetched).filter(t=>t.uploadId===uploadId);
   if(!batchTxns.length){ showToast('Nothing to remove — this upload has no transactions on file.'); return; }
   const dates = [...new Set(batchTxns.map(t=>t.date))].sort();
   const dateInput = dates.length>1
@@ -747,6 +770,7 @@ async function forceRemoveUpload(uploadId){  const batchTxns = DATA.transactions
   if(result){
     const removedIds = new Set(scoped.map(t=>t.id));
     DATA.transactions = DATA.transactions.filter(t=>!removedIds.has(t.id));
+    adminArchivedFetched = adminArchivedFetched.filter(t=>!removedIds.has(t.id));
     const log = DATA.uploadLog.find(u=>u.uploadId===uploadId);
     const anyLeft = DATA.transactions.some(t=>t.uploadId===uploadId);
     if(log) log.status = anyLeft ? 'Partially Force Removed' : 'Force Removed';
@@ -790,8 +814,8 @@ async function deleteSaleWindowRemote(id){
 async function resetTransactionByAdmin(query){
   const q = (query||'').trim();
   if(!q){ showToast('Enter a Transaction No. or ID first.'); return; }
-  const t = DATA.transactions.find(x=>x.id===q || x.transactionNumber===q);
-  if(!t){ showToast('No transaction found with that Transaction No. or ID.'); return; }
+  const t = DATA.transactions.concat(adminArchivedFetched).find(x=>x.id===q || x.transactionNumber===q);
+  if(!t){ showToast('No transaction found with that Transaction No. or ID — if it\'s Signed Off or No Action Needed, click "Fetch Archived Data" with the right date range first.'); return; }
   if(t.status==='Not Submitted' && !t.storeRemarks && !t.clusterRemarks && !t.reason){
     showToast(`${t.transactionNumber} is already at its default state — nothing to reset.`);
     return;
@@ -800,8 +824,15 @@ async function resetTransactionByAdmin(query){
   const ok = await postAction('resetTransaction', { id: t.id, resetBy: 'Admin' });
   if(ok){
     t.storeApproval=false; t.storeRemarks=''; t.reason=''; t.reasonRemarks=''; t.clusterRemarks='';
-    t.status='Not Submitted'; t.submittedDate=null; t.reviewedDate=null; t.reviewHistory=[];
+    t.status='Not Submitted'; t.submittedDate=null; t.reviewedDate=null; t.reviewHistory=[]; t.archived=false;
     t.lastUpdated=new Date().toISOString(); t.lastUpdatedBy='Admin (reset)';
+    // If this came from the archived fetch, it's active again now — move
+    // it into DATA.transactions so Store Entry / Cluster Queue see it,
+    // and drop it from the archived list so it isn't shown twice.
+    if(!DATA.transactions.some(x=>x.id===t.id)){
+      adminArchivedFetched = adminArchivedFetched.filter(x=>x.id!==t.id);
+      DATA.transactions.push(t);
+    }
     showToast(`Transaction ${t.transactionNumber} reset to Not Submitted.`);
     render();
   }
@@ -979,6 +1010,13 @@ function logout(){
   adminAuth = { unlocked:false };
   openStoreCategory = null;
   clusterKpiVisible = false;
+  clusterArchivedFetched = [];
+  hqDataFetched = false;
+  hqArchivedFetched = [];
+  regionalDataFetched = false;
+  regionalArchivedFetched = [];
+  adminDataFetched = false;
+  adminArchivedFetched = [];
   screen = 'hq';
   render();
 }
@@ -1014,6 +1052,12 @@ let openStoreCategory = null;
 // fetch" rather than it being computed and rendered on every visit to
 // the screen, per what was asked for.
 let clusterKpiVisible = false;
+// Populated by the Fetch Data button in Cluster Review — Signed Off /
+// No Action Needed transactions for this cluster's stores, matching
+// whatever date range is set. Empty until Fetch is clicked; reset on
+// manager switch or logout so stale data from a different cluster is
+// never shown.
+let clusterArchivedFetched = [];
 
 function renderStoreView(){
   const store = storeByCode(storeAuth.storeCode);
@@ -1400,19 +1444,54 @@ function renderClusterView(){
   const all = txnsFor(t=>codes.includes(t.storeCode));
   const allRaw = DATA.transactions.filter(t=>codes.includes(t.storeCode)); // includes hidden ≤500 refunds, for the Below Threshold card only
   const f = clusterFilters;
-  // Date range applies to the Store Summary counts (historical reporting)
-  // only — the Review Queue below always shows every pending item
-  // regardless of date, so nothing awaiting action can get hidden by a
-  // filter someone forgot was set.
+
+  // Nothing below this point computes or renders until Fetch Data is
+  // clicked — clusterKpiVisible gates the Store Summary, KPI grid, AND
+  // the Review Queue together now. Before that, only the lightweight
+  // page shell (filters + button) exists.
+  if(!clusterKpiVisible){
+    return `
+      <div class="session-bar">
+        <span>Reviewing as <b>${esc(mgr)}</b></span>
+        ${adminAuth.unlocked
+          ? `<select id="adminClusterSwitch" style="margin-left:10px;">${CLUSTER_MANAGERS.map(m=>`<option value="${esc(m)}" ${m===mgr?'selected':''}>${esc(m)}</option>`).join('')}</select>`
+          : `<a id="clusterLockBtn">Lock / switch manager</a>`
+        }
+      </div>
+      <div class="panel-head">
+        <div><h1>Cluster Review — ${esc(mgr)}</h1><p>${stores.map(s=>s.name).join(', ')}</p></div>
+      </div>
+      <div class="filters-grid" style="max-width:420px;">
+        <div><span class="field-label">From date</span><input type="date" id="cFDateFrom" value="${f.dateFrom||''}"></div>
+        <div><span class="field-label">To date</span><input type="date" id="cFDateTo" value="${f.dateTo||''}"></div>
+        <div style="align-self:end;"><button class="btn sm secondary" id="cFClearBtn">Clear dates</button></div>
+      </div>
+      <p class="locked-note" style="margin:10px 0 14px;">Leave both dates blank and click Fetch to see everything. With a date range set, the Review Queue below will ONLY show pending items dated inside that range — periodically fetch with no dates set to make sure nothing outside your usual window is waiting on you.</p>
+      <button class="btn sm" id="clusterFetchKpiBtn">Fetch Data</button>
+    `;
+  }
+
+  // Date range applies to the Store Summary counts AND, now, to the
+  // Review Queue as well — previously the Queue always ignored this
+  // filter on purpose (compliance safety net: nothing pending should be
+  // hidable by a forgotten filter). That protection is intentionally
+  // removed here per explicit request — the tradeoff is stated plainly
+  // above, next to the date fields, instead of being silent.
   const summaryScope = all.filter(t=>{
     if(f.dateFrom && t.date<f.dateFrom) return false;
     if(f.dateTo && t.date>f.dateTo) return false;
     return true;
   });
+  // KPI grid needs archived (Signed Off / No Action Needed) history too,
+  // which the main load no longer carries — clusterArchivedFetched is
+  // populated by the Fetch Data button's own network call and merged in
+  // here only for the numbers, never for the Review Queue (archived
+  // transactions can never be 'Awaiting Review' anyway).
+  const kpiScope = summaryScope.concat(clusterArchivedFetched.filter(t=>codes.includes(t.storeCode)));
 
   const summaryRows = storeSummaryRows(stores, summaryScope);
 
-  const queue = all.filter(t=>t.status==='Awaiting Review').sort((a,b)=>a.date<b.date?1:-1);
+  const queue = summaryScope.filter(t=>t.status==='Awaiting Review').sort((a,b)=>a.date<b.date?1:-1);
   const queueLines = flattenToLines(queue);
   const QUEUE_COLS = 19;
 
@@ -1462,11 +1541,11 @@ function renderClusterView(){
       <div style="align-self:end;"><button class="btn sm secondary" id="cFClearBtn">Clear dates</button></div>
     </div>
     <div style="margin:4px 0 14px;">
-      <button class="btn sm" id="clusterFetchKpiBtn">${clusterKpiVisible ? 'Refresh KPI Summary' : 'Fetch KPI Summary'}</button>
-      ${clusterKpiVisible ? `<button class="btn sm secondary" id="clusterHideKpiBtn" style="margin-left:8px;">Hide</button>` : ''}
+      <button class="btn sm" id="clusterFetchKpiBtn">Refresh (apply dates)</button>
+      <button class="btn sm secondary" id="clusterHideKpiBtn" style="margin-left:8px;">Hide / Reset</button>
     </div>
-    ${clusterKpiVisible ? renderClusterKpiGrid(summaryScope, mgr) : ''}
-    <div class="locked-note" style="margin:4px 0 12px;">${(f.dateFrom||f.dateTo) ? `Store Summary below is showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}.` : 'Store Summary below is the full cumulative total across every day currently loaded.'} The Review Queue always shows every pending item regardless of this filter.</div>
+    ${renderClusterKpiGrid(kpiScope, mgr)}
+    <div class="locked-note" style="margin:4px 0 12px;">${(f.dateFrom||f.dateTo) ? `Showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'} — including the Review Queue below.` : 'Showing the full cumulative total across every day currently loaded.'}</div>
     <div class="card">
       <div class="card-head"><h2>Store Summary</h2></div>
       <div class="card-body" style="overflow-x:auto;">
@@ -1481,9 +1560,9 @@ function renderClusterView(){
         <tbody>${queueRows}</tbody></table>
       </div>
     </div>
-    ${renderReasonsCard(all, mgr)}
-    ${renderMultiCriteriaCard(all, mgr)}
-    ${renderBelowThresholdCard(allRaw, mgr)}
+    ${renderReasonsCard(kpiScope, mgr)}
+    ${renderMultiCriteriaCard(kpiScope, mgr)}
+    ${renderBelowThresholdCard(allRaw.concat(clusterArchivedFetched.filter(t=>codes.includes(t.storeCode))), mgr)}
   `;
 }
 
@@ -1533,6 +1612,12 @@ function clusterKpiRow(mgr, stores, txns){
 }
 const CLUSTER_TABLE_HEAD = `<tr><th>Cluster Manager</th><th>Stores</th><th>Refund Txns</th><th>Refund Amt</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Amt</th><th>Full Price Return Txns</th><th>Full Price Return Amt</th><th>Discounted Return Txns</th><th>Discounted Return Amt</th><th>Signed Off</th><th>Not Started</th><th>Open Items</th><th>Completion %</th></tr>`;
 
+let regionalDataFetched = false;
+let regionalArchivedFetched = [];
+let adminFilters = {dateFrom:'', dateTo:''};
+let adminDataFetched = false;
+let adminArchivedFetched = [];
+
 function renderRegionalView(){
   const region = ctx.region;
   const stores = STORES.filter(s=>s.region===region && !s.closed);
@@ -1540,6 +1625,26 @@ function renderRegionalView(){
   // is excluded from the summary — it would otherwise show as a phantom row.
   const mgrs = [...new Set(stores.map(s=>s.clusterManager))].filter(m=>m!=='Unassigned');
   const f = regionalFilters;
+
+  if(!regionalDataFetched){
+    return `
+      <div class="session-bar"><span>Signed in for <b>${esc(region)}</b></span><a id="regionalLockBtn">Lock / switch region</a></div>
+      <div class="panel-head">
+        <div><h1>Regional Manager Insights</h1><p>${stores.length} stores · ${mgrs.length} cluster manager(s) in ${esc(region)}</p></div>
+        <div><span class="field-label">Region</span>${adminAuth.unlocked
+          ? `<select id="regionSelect">${REGIONS.map(r=>`<option ${region===r?'selected':''}>${esc(r)}</option>`).join('')}</select>`
+          : `<div style="padding:8px 10px;font-weight:600;">${esc(region)}</div>`
+        }</div>
+      </div>
+      <div class="filters-grid" style="max-width:420px;">
+        <div><span class="field-label">From date</span><input type="date" id="rFDateFrom" value="${f.dateFrom||''}"></div>
+        <div><span class="field-label">To date</span><input type="date" id="rFDateTo" value="${f.dateTo||''}"></div>
+        <div style="align-self:end;"><button class="btn sm secondary" id="rFClearBtn">Clear dates</button></div>
+      </div>
+      <p class="locked-note" style="margin:10px 0 14px;">Leave both dates blank and click Fetch for the full all-time total. Nothing below loads until then.</p>
+      <button class="btn sm" id="regionalFetchDataBtn">Fetch Data</button>
+    `;
+  }
 
   // Same date-range scoping as Cluster Review's Store Summary — applies to
   // BOTH the Cluster Manager rollup and the store-level breakdown below.
@@ -1549,9 +1654,9 @@ function renderRegionalView(){
     if(f.dateFrom && t.date<f.dateFrom) return false;
     if(f.dateTo && t.date>f.dateTo) return false;
     return true;
-  });
+  }).concat(regionalArchivedFetched.filter(t=>storeByCode(t.storeCode).region===region));
   // Same scope as regionScope but including hidden ≤500 refunds — for the Below Threshold card only.
-  const regionScopeRaw = DATA.transactions.filter(t=>{
+  const regionScopeRaw = DATA.transactions.concat(regionalArchivedFetched).filter(t=>{
     const store = storeByCode(t.storeCode);
     if(store.region!==region) return false;
     if(f.dateFrom && t.date<f.dateFrom) return false;
@@ -1585,7 +1690,11 @@ function renderRegionalView(){
       <div><span class="field-label">To date</span><input type="date" id="rFDateTo" value="${f.dateTo||''}"></div>
       <div style="align-self:end;"><button class="btn sm secondary" id="rFClearBtn">Clear dates</button></div>
     </div>
-    <div class="locked-note" style="margin:4px 0 12px;">${(f.dateFrom||f.dateTo) ? `Showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}.` : 'Showing the full cumulative total across every day currently loaded.'}</div>
+    <div style="margin:4px 0 14px;">
+      <button class="btn sm" id="regionalFetchDataBtn">Refresh (apply dates)</button>
+      <button class="btn sm secondary" id="regionalHideDataBtn" style="margin-left:8px;">Hide / Reset</button>
+    </div>
+    <div class="locked-note" style="margin:4px 0 12px;">${(f.dateFrom||f.dateTo) ? `Showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}.` : 'Showing the full cumulative total across every day fetched.'}</div>
     <div class="card">
       <div class="card-head"><h2>Cluster Manager Summary — ${esc(region)}</h2></div>
       <div class="card-body" style="overflow-x:auto;">
@@ -1607,9 +1716,36 @@ function renderRegionalView(){
 /* =========================================================
    HQ VIEW
    ========================================================= */
+let hqDataFetched = false;
+// Signed Off / No Action Needed transactions for ALL stores, matching
+// whatever date range was set at fetch time — region filtering happens
+// client-side against this same set (same as it already does for the
+// always-loaded active transactions), so changing the region dropdown
+// doesn't require re-fetching.
+let hqArchivedFetched = [];
+
 function renderHQView(){
   const f = getHqFilters();
-  const filtered = DATA.transactions.filter(t=>{
+  const regionLocked = regionalAuth.unlocked && !adminAuth.unlocked;
+
+  if(!hqDataFetched){
+    return `
+      <div class="panel-head"><div><h1>HQ Dashboard</h1><p>${regionLocked ? `Consolidated compliance position for ${esc(f.region)}` : 'Consolidated organization-wide compliance position'}</p></div></div>
+      <div class="filters-grid" style="max-width:560px;">
+        <div><span class="field-label">From date</span><input type="date" id="fDateFrom" value="${f.dateFrom||''}"></div>
+        <div><span class="field-label">To date</span><input type="date" id="fDateTo" value="${f.dateTo||''}"></div>
+        <div><span class="field-label">Region</span>${regionLocked
+          ? `<div style="padding:8px 10px;font-weight:600;">${esc(f.region)}</div>`
+          : `<select id="fRegion"><option value="all">All regions</option>${REGIONS.map(r=>`<option ${f.region===r?'selected':''}>${esc(r)}</option>`).join('')}</select>`
+        }</div>
+        <div style="align-self:end;"><button class="btn sm secondary" id="fClearBtn">Clear dates</button></div>
+      </div>
+      <p class="locked-note" style="margin:10px 0 14px;">Leave both dates blank and click Fetch for the full all-time total. Nothing below loads until then, to keep the page fast to open.</p>
+      <button class="btn sm" id="hqFetchDataBtn">Fetch Data</button>
+    `;
+  }
+
+  const filtered = DATA.transactions.concat(hqArchivedFetched).filter(t=>{
     if(isHiddenLowValueRefund(t)) return false;
     const store = storeByCode(t.storeCode);
     if(f.region!=='all' && store.region!==f.region) return false;
@@ -1618,7 +1754,7 @@ function renderHQView(){
     return true;
   });
   // Same scope as filtered but including hidden ≤500 refunds — for the Below Threshold card only.
-  const filteredRaw = DATA.transactions.filter(t=>{
+  const filteredRaw = DATA.transactions.concat(hqArchivedFetched).filter(t=>{
     const store = storeByCode(t.storeCode);
     if(f.region!=='all' && store.region!==f.region) return false;
     if(f.dateFrom && t.date<f.dateFrom) return false;
@@ -1655,8 +1791,6 @@ function renderHQView(){
     return clusterKpiRow(m, mgrStores, ts);
   }).join('');
 
-  const regionLocked = regionalAuth.unlocked && !adminAuth.unlocked;
-
   return `
     <div class="panel-head"><div><h1>HQ Dashboard</h1><p>${regionLocked ? `Consolidated compliance position for ${esc(f.region)}` : 'Consolidated organization-wide compliance position'}</p></div></div>
 
@@ -1669,7 +1803,11 @@ function renderHQView(){
       }</div>
       <div style="align-self:end;"><button class="btn sm secondary" id="fClearBtn">Clear dates</button></div>
     </div>
-    ${(f.dateFrom||f.dateTo) ? `<div class="locked-note" style="margin:4px 0 12px;">Showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}. Leave both blank for the full cumulative total across every day loaded.</div>` : `<div class="locked-note" style="margin:4px 0 12px;">Showing the full cumulative total across every day currently loaded. Set a From/To date above to narrow it.</div>`}
+    <div style="margin:4px 0 14px;">
+      <button class="btn sm" id="hqFetchDataBtn">Refresh (apply dates)</button>
+      <button class="btn sm secondary" id="hqHideDataBtn" style="margin-left:8px;">Hide / Reset</button>
+    </div>
+    ${(f.dateFrom||f.dateTo) ? `<div class="locked-note" style="margin:4px 0 12px;">Showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}. Leave both blank and refresh for the full cumulative total.</div>` : `<div class="locked-note" style="margin:4px 0 12px;">Showing the full cumulative total across every day fetched. Set a From/To date above and refresh to narrow it.</div>`}
 
     <div class="grid kpi-status" style="grid-template-columns:repeat(5,1fr);">
       <div class="kpi" data-kpi="total"><div class="num">${filtered.length}</div><div class="lbl">Total Transactions</div></div>
@@ -1775,7 +1913,7 @@ function renderCategorySummaryCard(txns, scopeLabel){
 function renderAdminUploadBody(){
   const uploads = DATA.uploadLog.slice(0,15);
   const uploadRows = uploads.length ? uploads.map(u=>{
-    const batchTxns = u.uploadId ? DATA.transactions.filter(t=>t.uploadId===u.uploadId) : [];
+    const batchTxns = u.uploadId ? DATA.transactions.concat(adminArchivedFetched).filter(t=>t.uploadId===u.uploadId) : [];
     // Only removable while EVERY transaction from this batch is still
     // Not Submitted — once anything's been submitted/reviewed, deleting it
     // would erase an audit trail. The backend enforces this too either way.
@@ -1797,10 +1935,20 @@ function renderAdminUploadBody(){
   }).join('') : `<tr><td colspan="8" class="empty">No uploads yet.</td></tr>`;
 
   return `
-    ${renderCategorySummaryCard(DATA.transactions, 'All stores, all dates')}
-    ${renderReasonsCard(DATA.transactions, 'All stores, all dates')}
-    ${renderMultiCriteriaCard(DATA.transactions, 'All stores, all dates')}
-    ${renderBelowThresholdCard(DATA.transactions, 'All stores, all dates')}
+    <div class="filters-grid" style="max-width:420px;">
+      <div><span class="field-label">From date</span><input type="date" id="aFDateFrom" value="${adminFilters.dateFrom||''}"></div>
+      <div><span class="field-label">To date</span><input type="date" id="aFDateTo" value="${adminFilters.dateTo||''}"></div>
+      <div style="align-self:end;"><button class="btn sm secondary" id="aFClearBtn">Clear dates</button></div>
+    </div>
+    <div style="margin:4px 0 14px;">
+      <button class="btn sm" id="adminFetchDataBtn">${adminDataFetched ? 'Refresh (apply dates)' : 'Fetch Archived Data'}</button>
+      ${adminDataFetched ? `<button class="btn sm secondary" id="adminHideDataBtn" style="margin-left:8px;">Hide / Reset</button>` : ''}
+    </div>
+    <p class="locked-note" style="margin:0 0 14px;">${adminDataFetched ? `Category Summary, Return Reasons, Multiple Criteria and Below Threshold below now include Signed Off / No Action Needed history matching your date range.` : `These four cards below currently reflect only active (Not Submitted / Awaiting Review / Re-Review) transactions — click Fetch to include full Signed Off / No Action Needed history.`}</p>
+    ${renderCategorySummaryCard(DATA.transactions.concat(adminArchivedFetched), 'All stores, all dates')}
+    ${renderReasonsCard(DATA.transactions.concat(adminArchivedFetched), 'All stores, all dates')}
+    ${renderMultiCriteriaCard(DATA.transactions.concat(adminArchivedFetched), 'All stores, all dates')}
+    ${renderBelowThresholdCard(DATA.transactions.concat(adminArchivedFetched), 'All stores, all dates')}
     <div class="note-box">Live and backed by your Google Sheet via the Apps Script Web App — every save here writes to the DataStore tab, and every load reads from it. This is not a local-only prototype.</div>
 
     <div class="grid" style="grid-template-columns:1fr 1fr;">
@@ -1916,9 +2064,77 @@ function bindDynamicHandlers(){
     };
   });
   const clusterFetchKpiBtn = document.getElementById('clusterFetchKpiBtn');
-  if(clusterFetchKpiBtn) clusterFetchKpiBtn.onclick = ()=>{ clusterKpiVisible = true; render(); };
+  if(clusterFetchKpiBtn) clusterFetchKpiBtn.onclick = async ()=>{
+    const dateFrom = document.getElementById('cFDateFrom') ? document.getElementById('cFDateFrom').value : clusterFilters.dateFrom;
+    const dateTo = document.getElementById('cFDateTo') ? document.getElementById('cFDateTo').value : clusterFilters.dateTo;
+    clusterFilters = { dateFrom, dateTo };
+    const stores = STORES.filter(s=>s.clusterManager===clusterAuth.clusterManager && !s.closed);
+    const codes = stores.map(s=>s.code);
+    clusterFetchKpiBtn.disabled = true; clusterFetchKpiBtn.textContent = 'Fetching...';
+    const archived = await fetchArchivedTransactions(dateFrom, dateTo, codes);
+    clusterFetchKpiBtn.disabled = false; clusterFetchKpiBtn.textContent = 'Refresh (apply dates)';
+    if(archived) clusterArchivedFetched = archived;
+    clusterKpiVisible = true;
+    render();
+  };
   const clusterHideKpiBtn = document.getElementById('clusterHideKpiBtn');
-  if(clusterHideKpiBtn) clusterHideKpiBtn.onclick = ()=>{ clusterKpiVisible = false; render(); };
+  if(clusterHideKpiBtn) clusterHideKpiBtn.onclick = ()=>{ clusterKpiVisible = false; clusterArchivedFetched = []; render(); };
+  const hqFetchDataBtn = document.getElementById('hqFetchDataBtn');
+  if(hqFetchDataBtn) hqFetchDataBtn.onclick = async ()=>{
+    const dateFrom = document.getElementById('fDateFrom') ? document.getElementById('fDateFrom').value : hqFilters.dateFrom;
+    const dateTo = document.getElementById('fDateTo') ? document.getElementById('fDateTo').value : hqFilters.dateTo;
+    const fRegionEl = document.getElementById('fRegion');
+    hqFilters = { dateFrom, dateTo, region: fRegionEl ? fRegionEl.value : hqFilters.region };
+    hqFetchDataBtn.disabled = true; hqFetchDataBtn.textContent = 'Fetching...';
+    // No storeCodes filter — HQ can show any region, so this always fetches
+    // every store's archived history for the date range and filters by
+    // region client-side, same as the always-loaded active transactions
+    // already do; avoids re-fetching every time the region dropdown changes.
+    const archived = await fetchArchivedTransactions(dateFrom, dateTo, null);
+    hqFetchDataBtn.disabled = false; hqFetchDataBtn.textContent = 'Refresh (apply dates)';
+    if(archived) hqArchivedFetched = archived;
+    hqDataFetched = true;
+    render();
+  };
+  const hqHideDataBtn = document.getElementById('hqHideDataBtn');
+  if(hqHideDataBtn) hqHideDataBtn.onclick = ()=>{ hqDataFetched = false; hqArchivedFetched = []; render(); };
+  const regionalFetchDataBtn = document.getElementById('regionalFetchDataBtn');
+  if(regionalFetchDataBtn) regionalFetchDataBtn.onclick = async ()=>{
+    const dateFrom = document.getElementById('rFDateFrom') ? document.getElementById('rFDateFrom').value : regionalFilters.dateFrom;
+    const dateTo = document.getElementById('rFDateTo') ? document.getElementById('rFDateTo').value : regionalFilters.dateTo;
+    regionalFilters = { dateFrom, dateTo };
+    const codes = STORES.filter(s=>s.region===ctx.region && !s.closed).map(s=>s.code);
+    regionalFetchDataBtn.disabled = true; regionalFetchDataBtn.textContent = 'Fetching...';
+    const archived = await fetchArchivedTransactions(dateFrom, dateTo, codes);
+    regionalFetchDataBtn.disabled = false; regionalFetchDataBtn.textContent = 'Refresh (apply dates)';
+    if(archived) regionalArchivedFetched = archived;
+    regionalDataFetched = true;
+    render();
+  };
+  const regionalHideDataBtn = document.getElementById('regionalHideDataBtn');
+  if(regionalHideDataBtn) regionalHideDataBtn.onclick = ()=>{ regionalDataFetched = false; regionalArchivedFetched = []; render(); };
+  ['aFDateFrom','aFDateTo'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.onchange = ()=>{
+      adminFilters = { dateFrom: document.getElementById('aFDateFrom').value, dateTo: document.getElementById('aFDateTo').value };
+    };
+  });
+  const aFClearBtn = document.getElementById('aFClearBtn');
+  if(aFClearBtn) aFClearBtn.onclick = ()=>{ adminFilters = {dateFrom:'', dateTo:''}; render(); };
+  const adminFetchDataBtn = document.getElementById('adminFetchDataBtn');
+  if(adminFetchDataBtn) adminFetchDataBtn.onclick = async ()=>{
+    const dateFrom = document.getElementById('aFDateFrom') ? document.getElementById('aFDateFrom').value : adminFilters.dateFrom;
+    const dateTo = document.getElementById('aFDateTo') ? document.getElementById('aFDateTo').value : adminFilters.dateTo;
+    adminFilters = { dateFrom, dateTo };
+    adminFetchDataBtn.disabled = true; adminFetchDataBtn.textContent = 'Fetching...';
+    const archived = await fetchArchivedTransactions(dateFrom, dateTo, null);
+    adminFetchDataBtn.disabled = false; adminFetchDataBtn.textContent = 'Refresh (apply dates)';
+    if(archived) adminArchivedFetched = archived;
+    adminDataFetched = true;
+    render();
+  };
+  const adminHideDataBtn = document.getElementById('adminHideDataBtn');
+  if(adminHideDataBtn) adminHideDataBtn.onclick = ()=>{ adminDataFetched = false; adminArchivedFetched = []; render(); };
   // Store: approval checkbox — updates the submit button's enabled state
   // live, WITHOUT a full re-render, so any remarks being typed in other
   // rows are never wiped out by the checkbox click.
@@ -2057,14 +2273,14 @@ function bindDynamicHandlers(){
 
   // Regional Manager Insights — region selector
   const regionSel = document.getElementById('regionSelect');
-  if(regionSel) regionSel.onchange = (e)=>{ ctx.region = e.target.value; render(); };
+  if(regionSel) regionSel.onchange = (e)=>{ ctx.region = e.target.value; regionalDataFetched = false; regionalArchivedFetched = []; render(); };
 
   // Store/cluster/regional switchers used ONLY by Admin browsing between
   // views post-login — not login gates anymore, just view selectors.
   const adminStoreSwitch = document.getElementById('adminStoreSwitch');
   if(adminStoreSwitch) adminStoreSwitch.onchange = ()=>{ storeAuth.storeCode = adminStoreSwitch.value; render(); };
   const adminClusterSwitch = document.getElementById('adminClusterSwitch');
-  if(adminClusterSwitch) adminClusterSwitch.onchange = ()=>{ clusterAuth.clusterManager = adminClusterSwitch.value; render(); };
+  if(adminClusterSwitch) adminClusterSwitch.onchange = ()=>{ clusterAuth.clusterManager = adminClusterSwitch.value; clusterKpiVisible = false; clusterArchivedFetched = []; render(); };
 
   // Per-view "Lock" buttons and the header Log out button all do the same
   // thing now: clear every auth state and drop back to the single
@@ -2213,6 +2429,12 @@ async function submitStoreDrafts(storeCode){  const drafts = DATA.transactions.f
   }
   const today = new Date().toISOString();
   const auditEntries = [];
+  // Snapshot before mutating so a failed save can be rolled back exactly —
+  // without this, a save that fails server-side left the LOCAL screen
+  // saying "submitted" while the Sheet still had it at Not Submitted, so
+  // it silently reappeared as pending on the next reload with no warning
+  // anything had gone wrong.
+  const snapshots = drafts.map(t=>({t, submittedDate:t.submittedDate, lastUpdated:t.lastUpdated, lastUpdatedBy:t.lastUpdatedBy}));
   drafts.forEach(t=>{
     t.status='Awaiting Review';
     t.submittedDate = t.date;
@@ -2220,7 +2442,12 @@ async function submitStoreDrafts(storeCode){  const drafts = DATA.transactions.f
     t.lastUpdatedBy = 'Store Manager';
     auditEntries.push(addAudit({user:'Store Manager', role:'Store', action:'Store Submitted', transaction:t.transactionNumber, prevStatus:'Not Submitted', newStatus:'Awaiting Review', remarks:t.storeRemarks}));
   });
-  await patchTransactions(drafts, auditEntries);
+  const ok = await patchTransactions(drafts, auditEntries);
+  if(!ok){
+    snapshots.forEach(s=>{ s.t.status='Not Submitted'; s.t.submittedDate=s.submittedDate; s.t.lastUpdated=s.lastUpdated; s.t.lastUpdatedBy=s.lastUpdatedBy; });
+    render();
+    return; // postAction already showed the actual error — no misleading success toast
+  }
   showToast(`${drafts.length} approved transaction(s) submitted and locked for Cluster Review.`);
   render();
 }
@@ -2236,12 +2463,18 @@ async function submitSingleTxn(id){
     showToast('Select a Reason for Return (and remarks for "Other") before submitting.', 4000);
     return;
   }
+  const prevSubmittedDate = t.submittedDate, prevLastUpdated = t.lastUpdated, prevLastUpdatedBy = t.lastUpdatedBy;
   t.status='Awaiting Review';
   t.submittedDate = t.date;
   t.lastUpdated = new Date().toISOString();
   t.lastUpdatedBy = 'Store Manager';
   const auditEntry = addAudit({user:'Store Manager', role:'Store', action:'Store Submitted', transaction:t.transactionNumber, prevStatus:'Not Submitted', newStatus:'Awaiting Review', remarks:t.storeRemarks});
-  await patchTransactions([t], [auditEntry]);
+  const ok = await patchTransactions([t], [auditEntry]);
+  if(!ok){
+    t.status='Not Submitted'; t.submittedDate=prevSubmittedDate; t.lastUpdated=prevLastUpdated; t.lastUpdatedBy=prevLastUpdatedBy;
+    render();
+    return;
+  }
   showToast(`${t.transactionNumber} submitted and locked for Cluster Review.`);
   render();
 }
@@ -2249,11 +2482,17 @@ async function submitSingleTxn(id){
 async function resubmitTxn(id){
   const t = DATA.transactions.find(x=>x.id===id);
   if(!t || t.status!=='Re-Review') return;
+  const prevLastUpdated = t.lastUpdated, prevLastUpdatedBy = t.lastUpdatedBy;
   t.status='Awaiting Review';
   t.lastUpdated=new Date().toISOString();
   t.lastUpdatedBy='Store Manager';
   const auditEntry = addAudit({user:'Store Manager', role:'Store', action:'Store Resubmitted', transaction:t.transactionNumber, prevStatus:'Re-Review', newStatus:'Awaiting Review', remarks:t.storeRemarks});
-  await patchTransactions([t], [auditEntry]);
+  const ok = await patchTransactions([t], [auditEntry]);
+  if(!ok){
+    t.status='Re-Review'; t.lastUpdated=prevLastUpdated; t.lastUpdatedBy=prevLastUpdatedBy;
+    render();
+    return;
+  }
   showToast('Transaction resubmitted and locked again.');
   render();
 }
@@ -2262,6 +2501,8 @@ async function signOffTxn(id){
   const t = DATA.transactions.find(x=>x.id===id);
   if(!t) return;
   const prev = t.status;
+  const prevReviewHistory = (t.reviewHistory||[]).slice();
+  const prevReviewedDate = t.reviewedDate, prevLastUpdated = t.lastUpdated, prevLastUpdatedBy = t.lastUpdatedBy;
   t.reviewHistory = t.reviewHistory || [];
   const reviewEntry = { round: t.reviewHistory.length+1, decision:'Signed Off', remarks:t.clusterRemarks, by:clusterAuth.clusterManager, date:new Date().toISOString() };
   t.reviewHistory.push(reviewEntry);
@@ -2270,7 +2511,19 @@ async function signOffTxn(id){
   t.lastUpdated = new Date().toISOString();
   t.lastUpdatedBy = clusterAuth.clusterManager;
   const auditEntry = addAudit({user:clusterAuth.clusterManager, role:'Cluster Manager', action:'Cluster Manager Signed Off (round '+t.reviewHistory.length+')', transaction:t.transactionNumber, prevStatus:prev, newStatus:'Signed Off', remarks:t.clusterRemarks});
-  await saveReviewDecision(t, reviewEntry, auditEntry);
+  const ok = await saveReviewDecision(t, reviewEntry, auditEntry);
+  if(!ok){
+    // Roll back exactly — this is the fix for "signed-off transactions
+    // still showing in the queue": the save was failing silently, the
+    // screen said "signed off" and removed it from the queue anyway, and
+    // it only reappeared on the NEXT reload once the real (unsaved)
+    // status came back from the Sheet — by which point the success
+    // message had already told the Cluster Manager it was done.
+    t.status = prev; t.reviewHistory = prevReviewHistory; t.reviewedDate = prevReviewedDate;
+    t.lastUpdated = prevLastUpdated; t.lastUpdatedBy = prevLastUpdatedBy;
+    render();
+    return;
+  }
   showToast('Transaction signed off and closed.');
   render();
 }
@@ -2283,6 +2536,8 @@ async function sendReReview(id){
     return;
   }
   const prev = t.status;
+  const prevReviewHistory = (t.reviewHistory||[]).slice();
+  const prevLastUpdated = t.lastUpdated, prevLastUpdatedBy = t.lastUpdatedBy;
   t.reviewHistory = t.reviewHistory || [];
   const reviewEntry = { round: t.reviewHistory.length+1, decision:'Re-Review', remarks:t.clusterRemarks, by:clusterAuth.clusterManager, date:new Date().toISOString() };
   t.reviewHistory.push(reviewEntry);
@@ -2290,7 +2545,12 @@ async function sendReReview(id){
   t.lastUpdated = new Date().toISOString();
   t.lastUpdatedBy = clusterAuth.clusterManager;
   const auditEntry = addAudit({user:clusterAuth.clusterManager, role:'Cluster Manager', action:'Cluster Manager Sent for Re-Review (round '+t.reviewHistory.length+')', transaction:t.transactionNumber, prevStatus:prev, newStatus:'Re-Review', remarks:t.clusterRemarks});
-  await saveReviewDecision(t, reviewEntry, auditEntry);
+  const ok = await saveReviewDecision(t, reviewEntry, auditEntry);
+  if(!ok){
+    t.status = prev; t.reviewHistory = prevReviewHistory; t.lastUpdated = prevLastUpdated; t.lastUpdatedBy = prevLastUpdatedBy;
+    render();
+    return;
+  }
   showToast('Sent back to store for re-review.');
   render();
 }
