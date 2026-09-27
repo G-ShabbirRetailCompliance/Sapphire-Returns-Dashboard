@@ -805,6 +805,41 @@ async function deleteSaleWindowRemote(id){
     render();
   }
 }
+// Physically moves Signed Off / No Action Needed transactions to the
+// Archive sheets — see archiveOldTransactions in Code.gs. Doesn't touch
+// anything already in memory (those transactions were already excluded
+// from the main load), this only changes where the backend stores them,
+// which is what keeps the live sheet fast as history grows. Uses its own
+// fetch rather than postAction() because it needs the actual counts back
+// (archived/lineItems/reviewRounds/remaining), not just a plain success
+// boolean.
+async function archiveNow(){
+  const btn = document.getElementById('archiveNowBtn');
+  const resultEl = document.getElementById('archiveNowResult');
+  if(btn){ btn.disabled = true; btn.textContent = 'Archiving...'; }
+  pendingSaveCount++; renderSaveIndicator();
+  try{
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'archiveOldTransactions', secret: SHARED_SECRET, data:{} })
+    });
+    const json = await res.json();
+    if(json && json.ok){
+      if(resultEl) resultEl.textContent = json.archived===0
+        ? 'Nothing to archive — the live sheet has no Signed Off / No Action Needed rows left.'
+        : `Archived ${json.archived} transaction(s), ${json.lineItems} line item(s), ${json.reviewRounds} review round(s).${json.remaining>0?` ${json.remaining} more remain — click Archive Now again.`:''}`;
+      showToast(json.archived>0 ? `Archived ${json.archived} transaction(s).` : 'Nothing to archive.');
+    } else {
+      showToast((json&&json.error)||'Archive failed.', 6000);
+    }
+  }catch(e){
+    showToast('Could not reach the backend to archive. ('+(e.message||e)+')', 6000);
+  }finally{
+    pendingSaveCount--; renderSaveIndicator();
+    if(btn){ btn.disabled = false; btn.textContent = 'Archive Now'; }
+  }
+}
 // Test-data cleanup: clears Store Approval / Store & Cluster Remarks /
 // Reason / review history on ONE transaction and sets it back to Not
 // Submitted. Does not delete the transaction row itself, and does not
@@ -834,6 +869,32 @@ async function resetTransactionByAdmin(query){
       DATA.transactions.push(t);
     }
     showToast(`Transaction ${t.transactionNumber} reset to Not Submitted.`);
+    render();
+  }
+}
+// Repairs a transaction whose Status doesn't match its own latest review
+// round — e.g. history shows "Signed Off" but Status is stuck at
+// "Awaiting Review", from a save that appended the review round but
+// didn't persist the status update. Only Status (and Reviewed Date, if
+// syncing to Signed Off) changes — remarks and every review round stay
+// exactly as they are.
+async function reconcileTxnStatus(query){
+  const q = (query||'').trim();
+  if(!q){ showToast('Enter a Transaction No. or ID first.'); return; }
+  const t = DATA.transactions.concat(adminArchivedFetched).find(x=>x.id===q || x.transactionNumber===q);
+  if(!t){ showToast('No transaction found with that Transaction No. or ID — if it\'s Signed Off or No Action Needed, click "Fetch Archived Data" with the right date range first.'); return; }
+  const latest = (t.reviewHistory||[]).slice().sort((a,b)=>a.round-b.round).pop();
+  if(!latest){ showToast(`${t.transactionNumber} has no review history to reconcile against.`); return; }
+  const correctStatus = latest.decision==='Signed Off' ? 'Signed Off' : latest.decision==='Re-Review' ? 'Re-Review' : null;
+  if(!correctStatus){ showToast(`Latest review round has an unrecognized decision: ${latest.decision}`); return; }
+  if(t.status===correctStatus){ showToast(`${t.transactionNumber}'s status already matches its latest review round — nothing to fix.`); return; }
+  if(!confirm(`${t.transactionNumber} is showing "${t.status}" but its latest review round (round ${latest.round}, by ${latest.by||'—'}) says "${latest.decision}". Set Status to "${correctStatus}"? Remarks and review history are not touched.`)) return;
+  const result = await postAction('reconcileTransactionStatus', { id: t.id });
+  if(result){
+    t.status = correctStatus;
+    if(correctStatus==='Signed Off') t.reviewedDate = latest.date ? latest.date.slice(0,10) : new Date().toISOString().slice(0,10);
+    t.lastUpdated = new Date().toISOString();
+    showToast(`${t.transactionNumber} status corrected to "${correctStatus}".`);
     render();
   }
 }
@@ -1995,6 +2056,15 @@ function renderAdminUploadBody(){
     </div>
 
     <div class="card">
+      <div class="card-head"><h2>Archive Old Transactions</h2></div>
+      <div class="card-body">
+        <p class="locked-note" style="margin-bottom:10px;">Physically moves Signed Off / No Action Needed transactions off the live sheet onto a separate Archive sheet — nothing is deleted, only relocated, and every transaction remains fully visible through "Fetch Archived Data" everywhere in the dashboard. This is what keeps the site fast to load as your history grows: the live sheet only has to hold what's currently active. Safe to run anytime, and safe to run repeatedly — processes up to 300 transactions per click, so a large backlog may need a few clicks.</p>
+        <button class="btn sm" id="archiveNowBtn">Archive Now</button>
+        <span id="archiveNowResult" style="margin-left:10px;font-size:13px;color:var(--ink-600);"></span>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="card-head"><h2>Upload Return Report</h2></div>
       <div class="card-body">
         <p class="locked-note" style="margin-bottom:10px;">Accepts the standard Return Report export (.xlsx) — header on row 7, one row per line-item. Store list, Region and Cluster Manager are already built in from Attributes_Store; you don't need to upload that sheet. Imported: Refund, Returns Over 30 Days, and — depending on the date — either Full Price Sale Return (during a Sale Days window) or Discounted Sale Return (outside one). Clean, on-time exchanges that don't match any of these are skipped and counted separately in the summary below.</p>
@@ -2019,6 +2089,17 @@ function renderAdminUploadBody(){
         <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
           <div><span class="field-label">Transaction No. or ID</span><input type="text" id="resetTxnInput" placeholder="e.g. 100234567 or T00042" style="min-width:220px;"></div>
           <button class="btn sm danger" id="resetTxnBtn">Find &amp; Reset</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Fix Status Mismatch</h2></div>
+      <div class="card-body">
+        <p class="locked-note" style="margin-bottom:8px;">For a transaction whose Status doesn't match its own latest review round — e.g. the review history shows "Signed Off" but Status still says Awaiting Review. Sets Status to match the latest round only; remarks, reason, and every review round are left exactly as they are. Logged in the Audit Trail.</p>
+        <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
+          <div><span class="field-label">Transaction No. or ID</span><input type="text" id="reconcileTxnInput" placeholder="e.g. 100234567 or T00042" style="min-width:220px;"></div>
+          <button class="btn sm secondary" id="reconcileTxnBtn">Find &amp; Fix Status</button>
         </div>
       </div>
     </div>
@@ -2389,6 +2470,8 @@ function bindDynamicHandlers(){
   document.querySelectorAll('[data-deletesalewindow]').forEach(b=>{
     b.onclick = ()=>deleteSaleWindowRemote(b.dataset.deletesalewindow);
   });
+  const archiveNowBtn = document.getElementById('archiveNowBtn');
+  if(archiveNowBtn) archiveNowBtn.onclick = archiveNow;
   document.querySelectorAll('[data-reason-toggle]').forEach(el=>{
     el.onclick = ()=>{
       const panel = document.getElementById('otherRemarksTable');
@@ -2399,6 +2482,10 @@ function bindDynamicHandlers(){
   const resetTxnInput = document.getElementById('resetTxnInput');
   if(resetTxnBtn) resetTxnBtn.onclick = ()=>resetTransactionByAdmin(resetTxnInput.value);
   if(resetTxnInput) resetTxnInput.onkeydown = (e)=>{ if(e.key==='Enter') resetTxnBtn.click(); };
+  const reconcileTxnBtn = document.getElementById('reconcileTxnBtn');
+  const reconcileTxnInput = document.getElementById('reconcileTxnInput');
+  if(reconcileTxnBtn) reconcileTxnBtn.onclick = ()=>reconcileTxnStatus(reconcileTxnInput.value);
+  if(reconcileTxnInput) reconcileTxnInput.onkeydown = (e)=>{ if(e.key==='Enter') reconcileTxnBtn.click(); };
 }
 
 async function persistQuiet(t){ await patchTransactions([t], []); }
