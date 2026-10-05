@@ -565,7 +565,14 @@ async function fetchArchivedTransactions(dateFrom, dateTo, storeCodes){
     }
   };
   const result = await withRetry(attempt);
-  if(result.ok) return result.transactions;
+  if(result.ok){
+    // 'No Action Needed' (Full Price on a regular day, Discounted during
+    // a sale) is deliberately excluded from every dashboard view — kept
+    // on the Sheet and still archivable, just never shown here anymore.
+    // Filtered centrally, right where the fetch lands, so every screen
+    // that calls this function gets the same exclusion automatically.
+    return result.transactions.filter(t=>t.status!=='No Action Needed');
+  }
   showToast(result.error, 6000);
   return null;
 }
@@ -681,7 +688,12 @@ async function postAction(action, data){
     });
     const json = await res.json();
     if(!json || !json.ok){
-      showToast('SAVE REJECTED BY BACKEND — this change was NOT written to the Sheet and will be lost on refresh. ('+(json&&json.error?json.error:'unknown error')+')', 8000);
+      // Users just need to know it wasn't saved and who to call — the
+      // technical cause (outdated deployment) is for the administrator.
+      // Every backend failure gets the same plain message; the detail
+      // goes to the browser console for the admin to read if asked.
+      console.error('Save failed for action "'+action+'":', json && json.error ? json.error : 'unknown error');
+      showToast('This change could not be saved. Please contact the administrator.', 8000);
       return false;
     }
     return true;
@@ -1072,6 +1084,7 @@ function logout(){
   openStoreCategory = null;
   clusterKpiVisible = false;
   clusterArchivedFetched = [];
+  openClusterCategory = null;
   hqDataFetched = false;
   hqArchivedFetched = [];
   regionalDataFetched = false;
@@ -1108,6 +1121,9 @@ function renderPasswordGate(){
 // per-render) so it survives re-renders from other actions (checkbox
 // changes, remark saves) without snapping shut on every keystroke.
 let openStoreCategory = null;
+// Same per-category gating as Store Entry, but for Cluster Review's
+// Review Queue — nothing loads until a category button is clicked.
+let openClusterCategory = null;
 // Cluster Review's KPI grid (mirroring HQ/Admin) is hidden until the
 // Cluster Manager explicitly asks for it — "select a date range and
 // fetch" rather than it being computed and rendered on every visit to
@@ -1488,7 +1504,6 @@ function renderClusterKpiGrid(txns, scopeLabel){
       <div class="kpi status-done" data-kpi="signedoff"><div class="num num-green">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
       <div class="kpi status-pending" data-kpi="notstarted"><div class="num num-red">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
       <div class="kpi status-pending" data-kpi="openitems"><div class="num num-red">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
-      <div class="kpi" data-kpi="noactionneeded"><div class="num">${bucket('No Action Needed')}</div><div class="lbl">No Action Needed (View Only)</div></div>
     </div>
     <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px;">
       <div class="kpi accent" data-kpi="refund"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
@@ -1552,7 +1567,14 @@ function renderClusterView(){
 
   const summaryRows = storeSummaryRows(stores, summaryScope);
 
-  const queue = summaryScope.filter(t=>t.status==='Awaiting Review').sort((a,b)=>a.date<b.date?1:-1);
+  const CATEGORY_ORDER = ['refund','over30','fullprice','discounted'];
+  const queueAll = summaryScope.filter(t=>t.status==='Awaiting Review');
+  const categoryCounts = {};
+  CATEGORY_ORDER.forEach(cat=>{ categoryCounts[cat] = queueAll.filter(t=>t.category===cat).length; });
+  const catButtons = CATEGORY_ORDER.map(cat=>
+    `<button class="btn sm ${openClusterCategory===cat?'':'secondary'}" data-showclustercat="${cat}">${esc(CATEGORY_LABEL[cat])} (${categoryCounts[cat]})</button>`
+  ).join(' ');
+  const queue = openClusterCategory ? queueAll.filter(t=>t.category===openClusterCategory).sort((a,b)=>a.date<b.date?1:-1) : [];
   const queueLines = flattenToLines(queue);
   const QUEUE_COLS = 19;
 
@@ -1615,10 +1637,14 @@ function renderClusterView(){
       </div>
     </div>
     <div class="card">
-      <div class="card-head"><h2>Review Queue</h2><span class="count">${queue.length} awaiting</span></div>
-      <div class="card-body" style="overflow-x:auto;">
+      <div class="card-head"><h2>Review Queue</h2><span class="count">${queueAll.length} awaiting</span></div>
+      <div class="card-body">
+        <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;">${catButtons}</div>
+        ${openClusterCategory ? `
+        <div style="overflow-x:auto;">
         <table><thead><tr><th>Store</th><th>Return Date</th><th>Time</th><th>Transaction No.</th><th>Barcode</th><th>Return Qty</th><th>Return Amount</th><th>Refund Amount</th><th>Payment Method</th><th>Price Type</th><th>Original Transaction</th><th>Also Matches</th><th>Reason for Return</th><th>Store Remarks</th><th>Status</th><th>Cluster Review</th><th>Cluster Manager Review 2</th><th>Cluster Remarks (this round)</th><th>Action</th></tr></thead>
         <tbody>${queueRows}</tbody></table>
+        </div>` : `<p class="locked-note" style="padding:10px 0;">Select a category above to load its pending transactions. Nothing loads until you choose one.</p>`}
       </div>
     </div>
     ${renderReasonsCard(kpiScope, mgr)}
@@ -1875,7 +1901,6 @@ function renderHQView(){
       <div class="kpi status-done" data-kpi="signedoff"><div class="num num-green">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
       <div class="kpi status-pending" data-kpi="notstarted"><div class="num num-red">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
       <div class="kpi status-pending" data-kpi="openitems"><div class="num num-red">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
-      <div class="kpi" data-kpi="noactionneeded"><div class="num">${bucket('No Action Needed')}</div><div class="lbl">No Action Needed (View Only)</div></div>
     </div>
     <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);">
       <div class="kpi accent" data-kpi="refund"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
@@ -1959,7 +1984,6 @@ function renderCategorySummaryCard(txns, scopeLabel){
           <div class="kpi status-done" data-kpi="signedoff"><div class="num num-green">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
           <div class="kpi status-pending" data-kpi="notstarted"><div class="num num-red">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
           <div class="kpi status-pending" data-kpi="openitems"><div class="num num-red">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
-          <div class="kpi" data-kpi="noactionneeded"><div class="num">${bucket('No Action Needed')}</div><div class="lbl">No Action Needed (View Only)</div></div>
         </div>
         <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);">
           <div class="kpi accent" data-kpi="refund"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
@@ -2144,6 +2168,12 @@ function bindDynamicHandlers(){
       render();
     };
   });
+  document.querySelectorAll('[data-showclustercat]').forEach(el=>{
+    el.onclick = ()=>{
+      openClusterCategory = openClusterCategory===el.dataset.showclustercat ? null : el.dataset.showclustercat;
+      render();
+    };
+  });
   const clusterFetchKpiBtn = document.getElementById('clusterFetchKpiBtn');
   if(clusterFetchKpiBtn) clusterFetchKpiBtn.onclick = async ()=>{
     const dateFrom = document.getElementById('cFDateFrom') ? document.getElementById('cFDateFrom').value : clusterFilters.dateFrom;
@@ -2159,7 +2189,7 @@ function bindDynamicHandlers(){
     render();
   };
   const clusterHideKpiBtn = document.getElementById('clusterHideKpiBtn');
-  if(clusterHideKpiBtn) clusterHideKpiBtn.onclick = ()=>{ clusterKpiVisible = false; clusterArchivedFetched = []; render(); };
+  if(clusterHideKpiBtn) clusterHideKpiBtn.onclick = ()=>{ clusterKpiVisible = false; clusterArchivedFetched = []; openClusterCategory = null; render(); };
   const hqFetchDataBtn = document.getElementById('hqFetchDataBtn');
   if(hqFetchDataBtn) hqFetchDataBtn.onclick = async ()=>{
     const dateFrom = document.getElementById('fDateFrom') ? document.getElementById('fDateFrom').value : hqFilters.dateFrom;
@@ -2361,7 +2391,7 @@ function bindDynamicHandlers(){
   const adminStoreSwitch = document.getElementById('adminStoreSwitch');
   if(adminStoreSwitch) adminStoreSwitch.onchange = ()=>{ storeAuth.storeCode = adminStoreSwitch.value; render(); };
   const adminClusterSwitch = document.getElementById('adminClusterSwitch');
-  if(adminClusterSwitch) adminClusterSwitch.onchange = ()=>{ clusterAuth.clusterManager = adminClusterSwitch.value; clusterKpiVisible = false; clusterArchivedFetched = []; render(); };
+  if(adminClusterSwitch) adminClusterSwitch.onchange = ()=>{ clusterAuth.clusterManager = adminClusterSwitch.value; clusterKpiVisible = false; clusterArchivedFetched = []; openClusterCategory = null; render(); };
 
   // Per-view "Lock" buttons and the header Log out button all do the same
   // thing now: clear every auth state and drop back to the single
