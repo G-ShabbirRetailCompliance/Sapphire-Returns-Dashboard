@@ -728,6 +728,19 @@ async function saveReviewDecision(txn, reviewEntry, auditEntry){
 async function saveUpload(newTxns, uploadLogEntry, auditEntry){
   return postAction('appendUpload', { transactions: newTxns, uploadLogEntry, auditEntry });
 }
+// Same as saveUpload but returns the backend's JSON so the server's own
+// duplicate count (rows it skipped) is available to the caller.
+async function saveUploadJson(newTxns, uploadLogEntry, auditEntry){
+  pendingSaveCount++; renderSaveIndicator();
+  try{
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'appendUpload', secret: SHARED_SECRET, data:{ transactions:newTxns, uploadLogEntry, auditEntry } })
+    });
+    return await res.json();
+  }catch(e){ return { ok:false, error:String(e.message||e) }; }
+  finally{ pendingSaveCount--; renderSaveIndicator(); }
+}
 async function removeUpload(uploadId){
   const batchTxns = DATA.transactions.concat(adminArchivedFetched).filter(t=>t.uploadId===uploadId);
   if(!batchTxns.length){ showToast('Nothing to remove — this upload has no transactions on file.'); return; }
@@ -739,7 +752,7 @@ async function removeUpload(uploadId){
   const date = dateInput.trim() || null;
   if(date && !dates.includes(date)){ showToast('This upload has no transactions dated '+date+'.'); return; }
   const scoped = date ? batchTxns.filter(t=>t.date===date) : batchTxns;
-  const stillMoving = scoped.filter(t=>t.status!=='Not Submitted');
+  const stillMoving = scoped.filter(t=>t.status!=='Not Submitted' && t.status!=='No Action Needed');
   if(stillMoving.length){
     showToast(stillMoving.length+' of '+scoped.length+' transaction(s)'+(date?' dated '+date:'')+' have already been submitted or reviewed — remove is only allowed while every matched row is still Not Submitted.', 6000);
     return;
@@ -2002,7 +2015,7 @@ function renderAdminUploadBody(){
     // Only removable while EVERY transaction from this batch is still
     // Not Submitted — once anything's been submitted/reviewed, deleting it
     // would erase an audit trail. The backend enforces this too either way.
-    const canRemove = u.uploadId && batchTxns.length>0 && batchTxns.every(t=>t.status==='Not Submitted');
+    const canRemove = u.uploadId && batchTxns.length>0 && batchTxns.every(t=>t.status==='Not Submitted'||t.status==='No Action Needed');
     const alreadyMoving = u.uploadId && batchTxns.length>0 && !canRemove;
     return `
     <tr>
@@ -2908,13 +2921,18 @@ function handleUpload(){
       });
 
       let imported=0, duplicate=0, unknownStore=0, notFlagged=0, missingReturnDate=0;
-      const existingKeys = new Set(DATA.transactions.map(t=>t.transactionNumber));
-      let nextId = DATA.transactions.length + 1;
+      // Key = store + transaction. Covers loaded rows only; the server
+      // (Code.gs) is the real gate and also checks Signed Off / No Action
+      // Needed / archived rows that the browser never loads.
+      const existingKeys = new Set(DATA.transactions.concat(adminArchivedFetched)
+        .map(t=>(t.storeCode+'|'+t.transactionNumber).toUpperCase()));
+      let seq = 1;
 
       groups.forEach(g=>{
-        if(existingKeys.has(g.key)){ duplicate++; return; }
         const store = resolveStore(g.storeCode);
         if(!store){ unknownStore++; return; }
+        const dupKey = (store.code+'|'+g.key).toUpperCase();
+        if(existingKeys.has(dupKey)){ duplicate++; return; }
 
         const isOnlineCN = /^cn/i.test(g.origTransaction||'');
         let agingDays = null, isOver30 = false;
@@ -2983,7 +3001,7 @@ function handleUpload(){
         if(g.discountedItemCount>0 && !inSaleWindow) matchedLabels.push('Discounted Return');
         const matchedCriteria = matchedLabels.join(', ');
 
-        existingKeys.add(g.key);
+        existingKeys.add(dupKey);
         // Compliance "amount" is metric-specific, matching the skill's Store
         // Summary: Over 30 Days reports raw Return Value (the full amount at
         // risk from a late return). Refund reports Remaining Balance (Return
@@ -3009,7 +3027,7 @@ function handleUpload(){
         // wrong day in every date-range filter.
         if(!g.returnDate){ missingReturnDate++; return; }
         DATA.transactions.push(baseTxn({
-          id: 'T'+String(nextId++).padStart(5,'0'),
+          id: 'T'+uploadBatchId.slice(1)+'-'+String(seq++).padStart(4,'0'), // unique per upload; can never collide with archived/deleted rows
           category,
           storeCode: store.code,
           transactionNumber: g.key,
@@ -3045,13 +3063,25 @@ function handleUpload(){
       // transaction already on the sheet (submitted, under review, signed
       // off by someone else right now) is left completely untouched.
       const newTxns = DATA.transactions.filter(t=>t.uploadId===uploadBatchId);
-      await saveUpload(newTxns, logEntry, auditEntry);
+      const upRes = await saveUploadJson(newTxns, logEntry, auditEntry);
+      if(!upRes || !upRes.ok){
+        // Save failed: take the rows back out so the screen matches the sheet.
+        DATA.transactions = DATA.transactions.filter(t=>t.uploadId!==uploadBatchId);
+        DATA.uploadLog = DATA.uploadLog.filter(u=>u.uploadId!==uploadBatchId);
+        showToast('Upload could not be saved. Nothing was imported. Please contact the administrator.', 8000);
+        render();
+        return;
+      }
+      const serverSkipped = upRes.serverSkippedDuplicates || 0;
+      // Reload from the sheet so the screen shows exactly what was stored.
+      const freshAfterUpload = await fetchDataFromBackend();
+      if(freshAfterUpload) DATA = freshAfterUpload;
 
       document.getElementById('uploadSummaryBox').innerHTML = `
         <div class="note-box" style="margin-top:12px;">
-          <b>Upload Summary</b> — Distinct transactions: ${groups.size} · Imported: ${imported} · Duplicate (already in system): ${duplicate} · Unknown store code: ${unknownStore} · Not flagged / clean exchange (skipped, not a compliance item): ${notFlagged}${missingReturnDate?` · <b>Unparseable Return Date (skipped — fix and re-upload): ${missingReturnDate}</b>`:''}${skippedNoKey?` · Rows with no Transaction key: ${skippedNoKey}`:''}
+          <b>Upload Summary</b> — Distinct transactions: ${groups.size} · Imported: ${imported - serverSkipped} · Duplicate (already in system): ${duplicate + serverSkipped} · Unknown store code: ${unknownStore} · Not flagged / clean exchange (skipped, not a compliance item): ${notFlagged}${missingReturnDate?` · <b>Unparseable Return Date (skipped — fix and re-upload): ${missingReturnDate}</b>`:''}${skippedNoKey?` · Rows with no Transaction key: ${skippedNoKey}`:''}
         </div>`;
-      showToast(`Import complete: ${imported} new transaction(s) added.`);
+      showToast(`Import complete: ${imported - serverSkipped} new transaction(s) added${serverSkipped?`, ${serverSkipped} already on the sheet and skipped`:''}.`);
       render();
     }catch(err){
       showToast('Could not read file: '+(err.message||err), 5000);
