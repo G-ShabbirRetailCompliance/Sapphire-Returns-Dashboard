@@ -376,6 +376,11 @@ function baseTxn(t){
 /* =========================================================
    STATE
    ========================================================= */
+// Same normalisation as Code.gs txnKey_(): keep the two in step.
+function normKeyPart(v){
+  return String(v==null?'':v).replace(/[\u00A0\u200B-\u200D\uFEFF]/g,' ').replace(/\s+/g,' ').trim().toUpperCase();
+}
+function txnKey(storeCode, txnNo){ return normKeyPart(storeCode)+'|'+normKeyPart(txnNo); }
 let DATA = { transactions: [], auditLog: [], uploadLog: [], saleWindows: [], lastUploadTs: null };
 // False whenever DATA is the offline empty-seed fallback rather than a
 // real response from the backend — drives a visible banner in render()
@@ -2925,13 +2930,13 @@ function handleUpload(){
       // (Code.gs) is the real gate and also checks Signed Off / No Action
       // Needed / archived rows that the browser never loads.
       const existingKeys = new Set(DATA.transactions.concat(adminArchivedFetched)
-        .map(t=>(t.storeCode+'|'+t.transactionNumber).toUpperCase()));
+        .map(t=>txnKey(t.storeCode, t.transactionNumber)));
       let seq = 1;
 
       groups.forEach(g=>{
         const store = resolveStore(g.storeCode);
         if(!store){ unknownStore++; return; }
-        const dupKey = (store.code+'|'+g.key).toUpperCase();
+        const dupKey = txnKey(store.code, g.key);
         if(existingKeys.has(dupKey)){ duplicate++; return; }
 
         const isOnlineCN = /^cn/i.test(g.origTransaction||'');
@@ -3079,7 +3084,7 @@ function handleUpload(){
 
       document.getElementById('uploadSummaryBox').innerHTML = `
         <div class="note-box" style="margin-top:12px;">
-          <b>Upload Summary</b> — Distinct transactions: ${groups.size} · Imported: ${imported - serverSkipped} · Duplicate (already in system): ${duplicate + serverSkipped} · Unknown store code: ${unknownStore} · Not flagged / clean exchange (skipped, not a compliance item): ${notFlagged}${missingReturnDate?` · <b>Unparseable Return Date (skipped — fix and re-upload): ${missingReturnDate}</b>`:''}${skippedNoKey?` · Rows with no Transaction key: ${skippedNoKey}`:''}
+          <b>Upload Summary</b> — Distinct transactions: ${groups.size} · Imported: ${imported - serverSkipped} · Duplicate (already in system): ${duplicate + serverSkipped} · Unknown store code: ${unknownStore} · Not flagged / clean exchange (skipped, not a compliance item): ${notFlagged}${missingReturnDate?` · <b>Unparseable Return Date (skipped — fix and re-upload): ${missingReturnDate}</b>`:''}${skippedNoKey?` · Rows with no Transaction key: ${skippedNoKey}`:''} · Server script: ${upRes.version ? esc(String(upRes.version)) : '<b>OLD VERSION (no duplicate gate) — redeploy</b>'}
         </div>`;
       showToast(`Import complete: ${imported - serverSkipped} new transaction(s) added${serverSkipped?`, ${serverSkipped} already on the sheet and skipped`:''}.`);
       render();
