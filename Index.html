@@ -1,0 +1,3134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sapphire Retail — Returns &amp; Refunds Compliance</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --navy-900:#0B2338;
+    --navy-800:#0F2E48;
+    --navy-700:#153B5B;
+    --teal-600:#0E7C86;
+    --teal-500:#128A95;
+    --teal-100:#E4F3F3;
+    --bg:#F2F5F7;
+    --card:#FFFFFF;
+    --line:#DCE3E9;
+    --ink-900:#12202C;
+    --ink-600:#4A5C6A;
+    --ink-400:#8496A3;
+    --amber:#B4720A;
+    --amber-bg:#FCF1DE;
+    --red:#842029;
+    --red-bg:#FBE9E7;
+    --green:#0F5132;
+    --green-bg:#E4F4EA;
+    --grey-bg:#EBEEF1;
+    --grey:#5B6B78;
+    --radius:6px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: "SF Mono", Consolas, monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);font-family:var(--font);color:var(--ink-900);font-size:14px;line-height:1.45;}
+  a{color:var(--teal-600);}
+
+  header.top{background:var(--navy-900);color:#fff;padding:0 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;position:sticky;top:0;z-index:50;box-shadow:0 1px 0 rgba(255,255,255,.08);}
+  .brand{display:flex;align-items:center;gap:10px;padding:12px 0;}
+  .brand .mark{width:30px;height:30px;border-radius:5px;background:linear-gradient(135deg,var(--teal-500),var(--teal-600));display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;}
+  .brand .title{font-size:14.5px;font-weight:600;letter-spacing:.2px;}
+  .brand .sub{font-size:11.5px;color:#9FB4C4;}
+  .live-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:#CBE6E8;font-size:11px;font-weight:600;padding:4px 10px 4px 8px;border-radius:20px;white-space:nowrap;}
+  .live-badge::before{content:'●';color:var(--teal-500);font-size:9px;}
+
+  .role-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 0;}
+  .role-bar select{background:var(--navy-700);color:#fff;border:1px solid #24506e;border-radius:5px;padding:6px 10px;font-size:13px;}
+  .role-bar select:focus{outline:2px solid var(--teal-500);}
+  .clock{font-size:11.5px;color:#9FB4C4;text-align:right;}
+  .clock b{color:#fff;font-weight:600;}
+
+  nav.tabs{background:var(--navy-800);display:flex;gap:6px;padding:8px 20px;overflow-x:auto;}
+  nav.tabs button{background:rgba(255,255,255,.06);border:none;border-radius:20px;color:#B7C7D3;padding:7px 16px;font-size:12.8px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .12s;}
+  nav.tabs button:hover{background:rgba(255,255,255,.14);color:#fff;}
+  nav.tabs button.active{background:#fff;color:var(--navy-900);}
+
+  main{max-width:1320px;margin:0 auto;padding:22px 20px 60px;}
+  .panel-head{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:16px;}
+  .panel-head h1{font-size:19px;margin:0;font-weight:650;}
+  .panel-head p{margin:2px 0 0;color:var(--ink-600);font-size:13px;}
+
+  .grid{display:grid;gap:14px;}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:18px;}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;}
+  .kpi .num{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;}
+  .num-green{color:var(--green);}
+  .num-red{color:var(--red);}
+  .num-amber{color:var(--amber);}
+  .kpi .lbl{font-size:12px;color:var(--ink-600);margin-top:2px;}
+  .pct-bar-track{background:var(--grey-bg);border-radius:20px;height:6px;width:70px;overflow:hidden;display:inline-block;vertical-align:middle;}
+  .pct-bar-fill{height:100%;border-radius:20px;}
+  .pct-bar-fill.pb-red{background:var(--red);}
+  .pct-bar-fill.pb-amber{background:var(--amber);}
+  .pct-bar-fill.pb-green{background:var(--green);}
+  .pct-cell{display:flex;align-items:center;gap:8px;justify-content:flex-end;}
+  .pct-cell .pct-num{font-weight:700;min-width:36px;text-align:right;}
+  .pct-cell .pct-num.pb-red{color:var(--red);}
+  .pct-cell .pct-num.pb-amber{color:var(--amber);}
+  .pct-cell .pct-num.pb-green{color:var(--green);}
+  .kpi.accent{border-left:3px solid var(--teal-600);}
+  .kpi.status-done{border-left:3px solid var(--green);}
+  .kpi.status-pending{border-left:3px solid var(--red);}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:18px;overflow:hidden;}
+  .kpi[data-kpi]{cursor:pointer;transition:box-shadow .15s;}
+  .kpi[data-kpi]:hover{box-shadow:0 0 0 2px var(--navy,#1c3a5e) inset;}
+  .modal-overlay{position:fixed;inset:0;background:rgba(20,25,32,.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .modal-box{background:var(--card);border-radius:var(--radius);max-width:1100px;width:100%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;}
+  .modal-head{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line);}
+  .modal-head h2{margin:0;font-size:16px;}
+  .modal-body{padding:16px 20px;overflow:auto;}
+  .card > .card-head{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;background:#FAFBFC;}
+  .card > .card-head h2{font-size:14px;margin:0;font-weight:650;}
+  .card > .card-head .count{font-size:12px;color:var(--ink-600);}
+  .card-body{padding:14px 16px;}
+
+  table{width:100%;border-collapse:collapse;font-size:12.8px;}
+  th{text-align:left;color:var(--ink-600);font-weight:600;font-size:11.5px;text-transform:none;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;}
+  td{padding:8px 10px;border-bottom:1px solid #EEF1F4;vertical-align:top;}
+  tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:#F8FAFB;}
+  /* Compact variant for wide multi-column summary tables (Store Summary,
+     Cluster/Regional KPI rows) so they fit without excessive horizontal
+     scroll on a laptop screen. */
+  .compact-table th{padding:5px 6px;font-size:10.5px;white-space:normal;}
+  .compact-table td{padding:4px 6px;font-size:11.5px;}
+  .compact-table td:first-child{white-space:nowrap;}
+  .mono{font-family:var(--mono);font-size:11.8px;color:var(--ink-600);}
+  .num-cell{text-align:right;font-variant-numeric:tabular-nums;}
+
+  .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap;}
+  .badge.st-not{background:var(--red-bg);color:var(--red);}
+  .badge.st-await{background:var(--red-bg);color:var(--red);}
+  .badge.st-rereview{background:var(--red-bg);color:var(--red);}
+  .badge.st-signed{background:var(--green-bg);color:var(--green);}
+  .badge.st-noaction{background:var(--green-bg);color:var(--green);font-style:italic;}
+
+  .btn{display:inline-flex;align-items:center;gap:6px;background:var(--teal-600);color:#fff;border:none;border-radius:5px;padding:7px 13px;font-size:12.5px;font-weight:600;cursor:pointer;}
+  .btn:hover{background:var(--teal-500);}
+  .btn.secondary{background:#fff;color:var(--navy-800);border:1px solid var(--line);}
+  .btn.secondary:hover{background:#F2F5F7;}
+  .btn.danger{background:#fff;color:var(--red);border:1px solid #EAC9C4;}
+  .btn.danger:hover{background:var(--red-bg);}
+  .btn:disabled{opacity:.45;cursor:not-allowed;}
+  .btn.sm{padding:5px 10px;font-size:11.5px;}
+
+  input[type=text],input[type=date],input[type=file],select,textarea{font-family:var(--font);font-size:12.8px;border:1px solid var(--line);border-radius:5px;padding:6px 9px;background:#fff;color:var(--ink-900);}
+  textarea{width:100%;min-height:44px;resize:vertical;}
+  input[type=checkbox]{width:15px;height:15px;}
+  .field-label{font-size:11px;color:var(--ink-600);margin-bottom:3px;display:block;}
+  .locked-note{font-size:11.3px;color:var(--ink-400);font-style:italic;}
+  .remark-locked{background:#F6F8F9;border-radius:4px;padding:6px 8px;font-size:12.3px;color:var(--ink-600);white-space:pre-wrap;}
+
+  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;}
+  .toolbar .field-label{margin-bottom:0;margin-right:4px;}
+
+  .empty{padding:30px 16px;text-align:center;color:var(--ink-400);font-size:13px;}
+  .status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;}
+  .dot-green{background:#1FA971;}
+  .dot-red{background:#D9463B;}
+
+  .toast{position:fixed;bottom:20px;right:20px;background:var(--navy-900);color:#fff;padding:12px 16px;border-radius:6px;font-size:13px;box-shadow:0 6px 18px rgba(0,0,0,.25);z-index:100;max-width:340px;transition:opacity .3s, transform .3s;}
+  .toast.hide{opacity:0;transform:translateY(8px);pointer-events:none;}
+
+  .note-box{background:var(--teal-100);border:1px solid #BFE1E2;border-radius:5px;padding:10px 12px;font-size:12.3px;color:#0A5459;margin-bottom:16px;}
+  .warn-box{background:var(--amber-bg);border:1px solid #EFD9AE;border-radius:5px;padding:10px 12px;font-size:12.3px;color:#7A4E08;margin-bottom:16px;}
+
+  .filters-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;}
+  .filters-grid select, .filters-grid input{width:100%;}
+
+  ::-webkit-scrollbar{height:8px;width:8px;}
+  ::-webkit-scrollbar-thumb{background:#C7D1D8;border-radius:4px;}
+
+  .login-gate{max-width:420px;margin:40px auto;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:26px 26px 22px;text-align:left;}
+  .login-gate h1{font-size:17px;margin:0 0 4px;}
+  .login-gate p{color:var(--ink-600);font-size:12.8px;margin:0 0 18px;}
+  .login-gate .field-label{margin-top:12px;}
+  .login-gate select,.login-gate input{width:100%;padding:8px 10px;}
+  .login-gate .btn{width:100%;justify-content:center;margin-top:16px;padding:9px;}
+  .login-gate .lockicon{font-size:22px;margin-bottom:6px;}
+  .auto-field{background:#F6F8F9;border-radius:5px;padding:7px 10px;font-size:12.8px;color:var(--ink-600);}
+  .session-bar{display:flex;align-items:center;justify-content:space-between;background:#EDF6F6;border:1px solid #CFE7E8;border-radius:6px;padding:8px 14px;margin-bottom:16px;font-size:12.5px;}
+  .session-bar a{cursor:pointer;color:var(--teal-600);font-weight:600;text-decoration:none;}
+  .kpi-status{grid-template-columns:repeat(4,1fr);}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <div class="mark">SR</div>
+    <div>
+      <div class="title">Returns &amp; Refunds Compliance</div>
+      <div class="sub">Sapphire Retail · Operations Governance &amp; Control</div>
+    </div>
+    <span class="live-badge">Live Dashboard</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <span id="savingFlag" style="display:none;font-size:11px;color:#e8b34a;font-weight:600;">● Saving…</span>
+    <div class="clock" id="clockBox"></div>
+    <button class="btn sm secondary" id="manualRefreshBtn" title="Refresh now">↻ Refresh</button>
+    <button class="btn sm secondary" id="logoutBtn" title="Log out" style="display:none;">Log out</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabBar"></nav>
+<div id="offlineBanner" style="display:none;background:var(--red-bg);color:var(--red);font-size:13px;font-weight:600;padding:8px 20px;text-align:center;">
+  ⚠ Could not reach the live backend — showing empty offline data, not your real transactions. Refresh the page to try again.
+</div>
+
+<main id="mainArea"></main>
+
+<div id="toast" class="toast hide"></div>
+
+<div id="txnListModal" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2 id="txnListModalTitle">Transactions</h2>
+      <button class="btn sm secondary" id="txnListModalClose">Close ✕</button>
+    </div>
+    <div class="modal-body" id="txnListModalBody"></div>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   STATIC MASTER DATA
+   Store list sourced from the Attributes_Store sheet of the real
+   Return Report export (60 stores). closed:true stores are kept in
+   the list (so historical returns still resolve to a store) but are
+   excluded from the store-login dropdown and from cluster manager
+   assignment.
+   ========================================================= */
+const STORES = [
+  {code:'S2005GUL', name:'Gulberg II, Lahore', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
+  {code:'S2001AIT', name:'Allama Iqbal Town, Lahore', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
+  {code:'S4005GUJ', name:'Satellite Town, Gujranwala', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
+  {code:'S4001BWP', name:'Avenue Plaza, Bahawalpur', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
+  {code:'S2007PML', name:'Packages Mall, Lahore', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
+  {code:'S4008MUL', name:'Gulgasht Colony, Multan', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
+  {code:'S4011SHW', name:'College Road, Sahiwal', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
+  {code:'S4009RHW', name:'Gujranwala Rahwali store', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
+  {code:'S2004EMP', name:'Emporium Mall, Lahore', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
+  {code:'S4004GRT', name:'Kutchery road, Gujrat', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
+  {code:'S2003DHA', name:'Y-Block DHA, Lahore', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
+  {code:'S4002FSD', name:'Jaranwala Road, Faisalabad', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
+  {code:'S4015SKP', name:'Sargodha Road, Sheikhpura', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
+  {code:'S4012SKT', name:'V-Mall, Sialkot', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
+  {code:'S2006MOD', name:'Mall of Defence, Lahore', cluster:'Closed', clusterManager:'Unassigned', region:'Central', closed:true},
+  {code:'S4003FSG', name:'Layalpur Galleria, Faisalabad', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
+  {code:'S2002AMN', name:'Amana Mall, Lahore', cluster:'Closed', clusterManager:'Unassigned', region:'Central', closed:true},
+  {code:'S3009SWT', name:'Blue Area, Swat', cluster:'N2', clusterManager:'Abdul Rehman', region:'North', closed:false},
+  {code:'S3002NCA', name:'Arcard City, Wah', cluster:'Closed', clusterManager:'Unassigned', region:'North', closed:true},
+  {code:'S3006WTC', name:'Giga Mall WTC, Rawalpindi', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
+  {code:'S4006MBH', name:'Jail Road, Mandi Bahauddin', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:true},
+  {code:'S3005RWP', name:'Pindi Saddar, Rawalpindi', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
+  {code:'S4010SGD', name:'Sargodha Store', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
+  {code:'S3003PWD', name:'PWD Islamabad Store', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
+  {code:'S3007ABT', name:'Jhangi Chowk, Abbottabad', cluster:'N2', clusterManager:'Abdul Rehman', region:'North', closed:false},
+  {code:'S3008PEW', name:'University Road, Peshawar', cluster:'N2', clusterManager:'Abdul Rehman', region:'North', closed:false},
+  {code:'S3004RCM', name:'S-Town, Rawalpindi', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
+  {code:'S3001CEN', name:'Centaurus Mall, Islamabad', cluster:'N2', clusterManager:'Abdul Rehman', region:'North', closed:false},
+  {code:'S4014MIR', name:'Dolphin Chowk, Mirpur', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
+  {code:'S5004DMT', name:'DMTR, Karachi', cluster:'S1', clusterManager:'Imran Azeem', region:'South', closed:false},
+  {code:'S5009BMH', name:'Autobahn Road, Hyderabad', cluster:'S2', clusterManager:'Syed Bilal Hussain', region:'South', closed:false},
+  {code:'S5008LUK', name:'Lucky One Mall, Karachi', cluster:'S2', clusterManager:'Syed Bilal Hussain', region:'South', closed:false},
+  {code:'S5002DMC', name:'DMC, Karachi', cluster:'S1', clusterManager:'Imran Azeem', region:'South', closed:false},
+  {code:'S5005GJK', name:'Gulistan-e-Johar, Karachi', cluster:'Closed', clusterManager:'Unassigned', region:'South', closed:true},
+  {code:'S5003DMH', name:'Dolmen Mall Hyderi', cluster:'S2', clusterManager:'Imran Azeem', region:'South', closed:true},
+  {code:'S6001FOL', name:'UOL FOL, Lahore', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
+  {code:'S5006KDA', name:'Gulshan KDA, Karachi', cluster:'Closed', clusterManager:'Unassigned', region:'South', closed:true},
+  {code:'S6002FOS', name:'Ferozwatwan FOL, Sheikhpura', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
+  {code:'S5001ATR', name:'Atrium Mall Sadar', cluster:'S1', clusterManager:'Imran Azeem', region:'South', closed:false},
+  {code:'S4013JHG', name:'Jhangg Store', cluster:'Franchise', clusterManager:'Unassigned', region:'Central', closed:true},
+  {code:'S6003KBL', name:'Karim Block, Lahore', cluster:'Closed', clusterManager:'Unassigned', region:'Central', closed:true},
+  {code:'S5007KEH', name:'Kehkashan, Karachi', cluster:'Closed', clusterManager:'Unassigned', region:'South', closed:true},
+  {code:'S4007MSQ', name:'Misaq ul Mall, Fasilabad', cluster:'Closed', clusterManager:'Unassigned', region:'Central', closed:true},
+  {code:'S2009LCM', name:'Lake City Mall, Lahore', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
+  {code:'S2010WTL', name:'Wapda Town Lahore', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
+  {code:'S5010SOM', name:'Square One Mall, Karachi', cluster:'S2', clusterManager:'Syed Bilal Hussain', region:'South', closed:false},
+  {code:'S4016RYK', name:'Rahim Yar Khan Store', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
+  {code:'S5011BHD', name:'Bahadurabad Store', cluster:'S1', clusterManager:'Imran Azeem', region:'South', closed:false},
+  {code:'S2011FSM', name:'Fortress Square Mall, Lahore', cluster:'Closed', clusterManager:'Unassigned', region:'Central', closed:true},
+  {code:'S3011SFA', name:'Safa Gold Mall, Islamabad', cluster:'N2', clusterManager:'Abdul Rehman', region:'North', closed:false},
+  {code:'S3010F10', name:'F-10 ISLAMABAD', cluster:'N2', clusterManager:'Abdul Rehman', region:'North', closed:false},
+  {code:'S3012CEN2', name:'Centaurus Mall 2, Islamabad', cluster:'N2', clusterManager:'Abdul Rehman', region:'North', closed:false},
+  {code:'S2012DML', name:'Dolmen Mall Lahore', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
+  {code:'S4019KMG', name:'King Mall Gujranwala', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
+  {code:'S3013F11', name:'F-11 Markaz', cluster:'N2', clusterManager:'Abdul Rehman', region:'North', closed:true},
+  {code:'S3014MPS', name:'Mall of Pindi Saddar', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
+  {code:'S5012HBK', name:'Hyderi Bazar Largesse Karachi', cluster:'S2', clusterManager:'Syed Bilal Hussain', region:'South', closed:false},
+  {code:'S4021MBH2', name:'Jail Road Mandi Bahauddin-02 Store', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
+  {code:'S3016GGB', name:'Giga Boutique', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
+  {code:'S2013BTL', name:'Bahria Town Lahore', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
+];
+const CLUSTER_MANAGERS = [...new Set(STORES.filter(s=>!s.closed && s.clusterManager!=='Unassigned').map(s=>s.clusterManager))];
+const REGIONS = [...new Set(STORES.map(s=>s.region))];
+// 'fullprice' replaces the former 'creditmemo' compliance bucket at store/cluster
+// workflow level — Full Price Sale Return transactions are now tracked instead of
+// plain Credit Memo settlements (see import classification below).
+const CATEGORY_LABEL = {refund:'Refund Transactions', over30:'Returns Over 30 Days', fullprice:'Full Price Sale Return Transactions', discounted:'Discounted Sale Return Transactions'};
+const REASON_OPTIONS = ['Missing Component','Damage Product','Size Issue','Incorrect Charging','Quality Issue','Wrong product punched','Double bill punched','Aggressive Customer','Cashier/Staff Mistake','Bill punched in wrong price','Customer need immediate Resolution','Online Customer Facilitate','Other'];
+
+// Sale Days windows — during one of these date ranges, a FULL PRICE return
+// is the compliance anomaly (everything sold was on discount, so a return
+// priced at full price is suspicious) and gets flagged as 'fullprice'.
+// OUTSIDE every window, the anomaly flips: a DISCOUNTED return is
+// suspicious (no promotion is running) and gets flagged as 'discounted'
+// instead. Both categories are ALWAYS shown in every KPI/summary card
+// regardless of window — see needsReview at import time — only WHICH one
+// requires a store remark + cluster sign-off changes.
+// The actual list lives on the Sheet (SaleWindows tab) and is managed
+// from Admin → Sale Days, not edited here — DATA.saleWindows is loaded
+// fresh on every refresh, same as transactions/auditLog/uploadLog.
+function isInSaleWindow(dateStr){
+  return (DATA.saleWindows||[]).some(w => dateStr>=w.start && dateStr<=w.end);
+}
+const STATUS_LIST = ['Not Submitted','Awaiting Review','Re-Review','Signed Off'];
+const STORAGE_KEY = 'sapphire-returns-dashboard-v1';
+
+/* =========================================================
+   BACKEND CONFIG — Google Apps Script Web App
+   -----------------------------------------------------------
+   1. Deploy Code.gs (paired with this file) as a Web App
+      (Extensions > Apps Script > Deploy > New deployment > Web app;
+      Execute as: Me, Who has access: Anyone). Copy the /exec URL.
+   2. Paste that URL below as APPS_SCRIPT_URL.
+   3. Paste the same SHARED_SECRET value you set at the top of
+      Code.gs below — it must match exactly on both sides.
+   ========================================================= */
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxdBbcbs5u8905ydzMEhu-SnvkgnT4naDAuIE1u9DLDngBmx9I1dbeis6_L1lrNrmKZ/exec';
+const SHARED_SECRET = 'SapphireRetailSecure#2026X9'; // must match Code.gs
+
+function storeByCode(c){ return STORES.find(s=>s.code===c); }
+
+/* =========================================================
+   SEED DATA
+   No fake demo rows — the dashboard starts empty and is populated
+   by an Admin uploading a real Return Report (see UPLOAD / IMPORT
+   below). baseTxn() is the shared shape every imported row is built
+   through.
+   ========================================================= */
+function makeSeedTransactions(){
+  return [];
+}
+
+function baseTxn(t){
+  const submitted = t.status !== 'Not Submitted';
+  return {
+    id: t.id,
+    category: t.category,            // 'over30' | 'refund' | 'fullprice' | 'discounted'
+    storeCode: t.storeCode,
+    transactionNumber: t.transactionNumber,  // the report's distinct Transaction key
+    itemCount: t.itemCount,          // number of line items under this transaction
+    qty: t.qty,                      // summed Return Qty
+    amount: t.amount,                // summed Return Total Amount
+    paymentMethod: t.paymentMethod || '',
+    date: t.date,                    // Return Date, yyyy-mm-dd
+    time: t.time || '',              // Transaction Time, HH:MM (from report column AB)
+    agingDays: t.agingDays ?? null,  // Return Date - Original Date, only set when known
+    priceType: t.priceType || 'N/A', // 'Full Price' | 'Discounted' | 'Mixed' | 'N/A'
+    discountValue: t.discountValue || 0, // sum of (full-price value - actual) across discounted line items
+    barcodes: t.barcodes || [],      // [{barcode, qty, amount, fullPrice}] — line-level detail under this transaction
+    origTransaction: t.origTransaction || '', // Original (sale) transaction number from the report
+    // Every compliance signal this transaction actually exhibits, computed
+    // at import time regardless of which single one became the assigned
+    // `category` above — 'category' is a priority-ordered PICK (Over 30 >
+    // Refund > Full Price > Discounted, Credit Memo excluding the latter
+    // three), so a transaction that's genuinely BOTH late and full-price
+    // still only ever gets 'over30' as its category, and this field is the
+    // only place that second signal survives. Comma-joined string, not an
+    // array, since it round-trips through a single Sheet cell.
+    matchedCriteria: t.matchedCriteria || '',
+    uploadId: t.uploadId || null, // which Admin upload batch this came from — used to remove a bad/duplicate upload without touching anything else
+    storeApproval: submitted ? true : false,
+    storeRemarks: submitted ? t.storeRemarks || '' : '',
+    // Reason for Return — required before submission, alongside store
+    // remarks. If reason==='Other', reasonRemarks holds the free-text note.
+    reason: t.reason || '',
+    reasonRemarks: t.reasonRemarks || '',
+    clusterRemarks: t.clusterRemarks || '',
+    // reviewHistory: one entry per Cluster Manager decision round.
+    // reviewHistory[0] = "Cluster Review" (first decision: Signed Off or Re-Review).
+    // reviewHistory[1] = "Cluster Manager Review 2" (only exists if round 1 was
+    // Re-Review and the store resubmitted with justification — this is the
+    // Cluster Manager's second look). {round, decision, remarks, by, date}
+    reviewHistory: t.reviewHistory || [],
+    status: t.status,
+    submittedDate: submitted ? t.date : null,
+    reviewedDate: (t.status==='Signed Off'||t.status==='Re-Review') ? t.date : null,
+    lastUpdated: new Date().toISOString(),
+    lastUpdatedBy: submitted ? 'Store Manager' : null,
+  };
+}
+
+/* =========================================================
+   STATE
+   ========================================================= */
+let DATA = { transactions: [], auditLog: [], uploadLog: [], saleWindows: [], lastUploadTs: null };
+// False whenever DATA is the offline empty-seed fallback rather than a
+// real response from the backend — drives a visible banner in render()
+// so that state is never mistaken for "the dashboard has no data,"
+// which is what a silent fallback used to look like.
+let dataIsLive = true;
+// Populated as a side effect of rendering HQ Dashboard or Admin's
+// Category-wise Summary — each holds the exact transaction list behind
+// one KPI box at the moment it was last drawn. Clicking a box reads from
+// here rather than recomputing, since the filter logic (date range,
+// region lock, category/status bucket) already lives inside those two
+// render functions and shouldn't be duplicated a third time just for the
+// popup. Only one of the two views is ever on screen at once, so
+// whichever rendered most recently is always the correct one to read.
+let kpiDrilldown = {};
+const KPI_LABELS = {
+  total:'Total Transactions',
+  signedoff:'Signed Off', notstarted:'Not Started', openitems:'Open Items (Awaiting Review + Re-Review)',
+  noactionneeded:'No Action Needed (View Only)',
+  refund:'Refund Transactions', over30:'Return >30 Days Transactions',
+  fullprice:'Full Price Sale Return Transactions', discounted:'Discounted Sale Return Transactions',
+};
+function openKpiModal(key){
+  const txns = kpiDrilldown[key] || [];
+  renderTxnListInModal(`${KPI_LABELS[key]||key} — ${txns.length} transaction(s)`, txns);
+  document.getElementById('txnListModal').style.display = 'flex';
+}
+let currentModalTxns = [];
+function renderTxnListInModal(title, txns){
+  document.getElementById('txnListModalTitle').textContent = title;
+  currentModalTxns = txns; // for CSV export — see exportModalCsv
+  const rows = txns.slice().sort((a,b)=>a.date<b.date?1:-1).map(t=>`
+    <tr>
+      <td class="mono">${esc(t.transactionNumber)}</td>
+      <td>${esc(t.storeCode)}</td>
+      <td>${fmtDate(t.date)}</td>
+      <td>${esc(CATEGORY_LABEL[t.category]||t.category)}</td>
+      <td class="num-cell">${money(t.amount)}</td>
+      <td>${badge(t.status)}</td>
+      <td><button class="btn sm secondary" data-viewtxndetail="${t.id}">View</button></td>
+    </tr>`).join('') || `<tr><td colspan="7" class="empty">No transactions in this bucket.</td></tr>`;
+  document.getElementById('txnListModalBody').innerHTML =
+    `<div style="margin-bottom:10px;"><button class="btn sm secondary" id="exportModalCsvBtn">Export CSV</button></div>
+     <table class="compact-table"><thead><tr><th>Transaction No.</th><th>Store</th><th>Date</th><th>Category</th><th>Value</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  document.querySelectorAll('[data-viewtxndetail]').forEach(b=>{
+    b.onclick = ()=>openTxnDetailInModal(b.dataset.viewtxndetail, title, txns);
+  });
+  const exportBtn = document.getElementById('exportModalCsvBtn');
+  if(exportBtn) exportBtn.onclick = ()=>exportTxnsCsv(title, currentModalTxns);
+}
+// Plain client-side CSV — no library needed for a flat transaction list.
+// Quotes every field and doubles internal quotes per RFC 4180 so a
+// remark containing a comma or a quote doesn't corrupt the file.
+function exportTxnsCsv(title, txns){
+  const cols = ['Transaction No.','Store','Date','Category','Qty','Value','Status','Reason','Reason Remarks','Store Remarks'];
+  const csvEscape = v => '"' + String(v==null?'':v).replace(/"/g,'""') + '"';
+  const lines = [cols.map(csvEscape).join(',')];
+  txns.forEach(t=>{
+    lines.push([t.transactionNumber, t.storeCode, t.date, CATEGORY_LABEL[t.category]||t.category, t.qty, t.amount, t.status, t.reason||'', t.reasonRemarks||'', t.storeRemarks||''].map(csvEscape).join(','));
+  });
+  const blob = new Blob([lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = title.replace(/[^\w.-]+/g,'_').slice(0,80) + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+// Signed Off / No Action Needed transactions arrive from the main load
+// with their barcode/review-history detail deliberately withheld (see
+// ARCHIVED_STATUSES in Code.gs) — this fetches it on demand, only for
+// the one transaction someone actually clicked into, instead of every
+// transaction carrying that weight on every page load whether anyone
+// looks at it or not. backLabel/backTxns let the modal return to
+// whatever list it was opened from.
+async function openTxnDetailInModal(id, backLabel, backTxns){
+  const t = DATA.transactions.find(x=>x.id===id);
+  if(!t) return;
+  document.getElementById('txnListModalTitle').textContent = `${t.transactionNumber} — ${esc(t.storeCode)}`;
+  document.getElementById('txnListModalBody').innerHTML = `<p class="locked-note">Loading line-item detail…</p>`;
+  let barcodes = t.barcodes, reviewHistory = t.reviewHistory;
+  if(t.archived){
+    try{
+      const res = await fetch(APPS_SCRIPT_URL + '?action=detail&id=' + encodeURIComponent(id) + '&_=' + Date.now(), { cache:'no-store' });
+      const json = await res.json();
+      if(json && json.ok){ barcodes = json.barcodes; reviewHistory = json.reviewHistory; }
+      else { showToast((json&&json.error)||'Could not load transaction detail.', 5000); }
+    }catch(e){
+      showToast('Could not reach the backend to load detail. ('+(e.message||e)+')', 6000);
+    }
+  }
+  const barcodeRows = (barcodes||[]).map(b=>`
+    <tr><td class="mono">${esc(b.barcode)}</td><td class="num-cell">${b.qty}</td><td class="num-cell">${money(b.amount)}</td>
+    <td>${b.fullPrice===true?'Full Price':b.fullPrice===false?'Discounted':'—'}</td></tr>`).join('')
+    || `<tr><td colspan="4" class="empty">No line items.</td></tr>`;
+  const reviewRows = (reviewHistory||[]).map(r=>`
+    <tr><td>${r.round}</td><td>${esc(r.decision)}</td><td>${esc(r.by||'—')}</td><td>${fmtDateTime(r.date)}</td><td>${esc(r.remarks||'—')}</td></tr>`).join('')
+    || `<tr><td colspan="5" class="empty">No review rounds yet.</td></tr>`;
+  document.getElementById('txnListModalBody').innerHTML = `
+    <button class="btn sm secondary" id="txnDetailBackBtn" style="margin-bottom:12px;">← Back to list</button>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px;">
+      <div><span class="field-label">Store</span><div>${esc(t.storeCode)}</div></div>
+      <div><span class="field-label">Date</span><div>${fmtDate(t.date)}</div></div>
+      <div><span class="field-label">Category</span><div>${esc(CATEGORY_LABEL[t.category]||t.category)}</div></div>
+      <div><span class="field-label">Value</span><div>${money(t.amount)}</div></div>
+      <div><span class="field-label">Status</span><div>${badge(t.status)}</div></div>
+      <div><span class="field-label">Reason</span><div>${esc(t.reason||'—')}${t.reason==='Other'&&t.reasonRemarks?': '+esc(t.reasonRemarks):''}</div></div>
+    </div>
+    <h3 style="font-size:14px;margin:0 0 6px;">Line Items</h3>
+    <table class="compact-table" style="margin-bottom:16px;"><thead><tr><th>Barcode</th><th>Qty</th><th>Amount</th><th>Price Type</th></tr></thead><tbody>${barcodeRows}</tbody></table>
+    <h3 style="font-size:14px;margin:0 0 6px;">Review History</h3>
+    <table class="compact-table"><thead><tr><th>Round</th><th>Decision</th><th>By</th><th>Date</th><th>Remarks</th></tr></thead><tbody>${reviewRows}</tbody></table>
+  `;
+  const backBtn = document.getElementById('txnDetailBackBtn');
+  if(backBtn) backBtn.onclick = ()=>renderTxnListInModal(backLabel, backTxns);
+}
+function closeKpiModal(){ document.getElementById('txnListModal').style.display = 'none'; }
+(function(){
+  const overlay = document.getElementById('txnListModal');
+  const closeBtn = document.getElementById('txnListModalClose');
+  if(closeBtn) closeBtn.onclick = closeKpiModal;
+  if(overlay) overlay.onclick = (e)=>{ if(e.target===overlay) closeKpiModal(); };
+  document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeKpiModal(); });
+})();
+let screen = 'hq'; // hq | store | cluster | regional | admin
+const OPEN_STORES = STORES.filter(s=>!s.closed);
+let storeAuth = { unlocked:false, storeCode: OPEN_STORES[0].code, password:'' };
+let clusterAuth = { unlocked:false, clusterManager: CLUSTER_MANAGERS[0], passcode:'' };
+// All login now validates server-side against the Credentials sheet via
+// Code.gs — no password is stored in this file. See verifyPasswordLogin() below.
+let adminAuth = { unlocked:false };
+let adminSubView = 'upload'; // upload | audit
+let ctx = { region: REGIONS[0] };
+let editingActive = false;
+// 'No Action Needed' is its own bucket, explicitly — WITHOUT this case it
+// would silently fall into 'Open Items' below and inflate that count with
+// transactions nobody is waiting on. Not counted in any of the three KPI
+// boxes (Signed Off / Not Started / Open Items) on purpose: it's neither
+// pending work nor a completed review, so it sits outside that tally
+// entirely rather than being force-fit into one of the three.
+function statusBucket(status){ return status==='Signed Off' ? 'Signed Off' : status==='Not Submitted' ? 'Not Started' : status==='No Action Needed' ? 'No Action Needed' : 'Open Items'; }
+let lastLoadedTs = null;
+const REFRESH_INTERVAL_SECONDS = 60; // 1 minute, per request
+let nextRefreshIn = REFRESH_INTERVAL_SECONDS;
+let regionalAuth = { unlocked:false, region: REGIONS[0] };
+
+/* =========================================================
+   STORAGE — Google Apps Script Web App is now the source of
+   truth (Google Sheet "DataStore" tab). See Code.gs.
+   ========================================================= */
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+// Apps Script Web Apps can be genuinely slow or fail outright on the
+// FIRST request after being idle for a while ("cold start") — this is a
+// Google infrastructure characteristic, not a bug in this code, but
+// without a retry it looks exactly like a real failure: the very first
+// page load (or the very first login attempt) can fail even with
+// perfectly correct credentials and a healthy backend, then succeed a
+// few seconds later with nothing having changed. Retrying automatically,
+// silently, before ever telling the user something is wrong, is what
+// actually fixes that — not asking them to keep trying manually.
+async function withRetry(fn, attempts=3, delays=[800,1800,3000]){
+  for(let i=0;i<attempts;i++){
+    const result = await fn();
+    if(result && result.ok) return result;
+    if(i<attempts-1) await sleep(delays[i]||3000);
+  }
+  return fn(); // final attempt's real result/error, whatever it is
+}
+
+// Fetches archived (Signed Off / No Action Needed) transactions matching
+// a date range and, optionally, a specific set of store codes — called
+// only from a "Fetch Data" button, never automatically. storeCodes null
+// means every store (Admin's all-stores view); an array scopes it to one
+// store, cluster, or region, computed by the caller from STORES.
+async function fetchArchivedTransactions(dateFrom, dateTo, storeCodes){
+  const attempt = async ()=>{
+    try{
+      const params = new URLSearchParams({ action:'archived', dateFrom: dateFrom||'', dateTo: dateTo||'', _: Date.now() });
+      if(storeCodes && storeCodes.length) params.set('storeCodes', storeCodes.join(','));
+      const res = await fetch(APPS_SCRIPT_URL + '?' + params.toString(), { cache:'no-store' });
+      const json = await res.json();
+      if(json && json.ok) return { ok:true, transactions: json.transactions };
+      return { ok:false, error:(json&&json.error)||'Backend returned an error fetching archived data.' };
+    }catch(e){
+      return { ok:false, error:'Could not reach the backend to fetch archived data. ('+(e.message||e)+')' };
+    }
+  };
+  const result = await withRetry(attempt);
+  if(result.ok){
+    // 'No Action Needed' (Full Price on a regular day, Discounted during
+    // a sale) is deliberately excluded from every dashboard view — kept
+    // on the Sheet and still archivable, just never shown here anymore.
+    // Filtered centrally, right where the fetch lands, so every screen
+    // that calls this function gets the same exclusion automatically.
+    return result.transactions.filter(t=>t.status!=='No Action Needed');
+  }
+  showToast(result.error, 6000);
+  return null;
+}
+async function fetchDataFromBackend(){  const attempt = async ()=>{
+    try{
+      // cache:'no-store' + a timestamp query param stop the browser from
+      // silently replaying a cached response on refresh instead of actually
+      // asking Apps Script again.
+      const res = await fetch(APPS_SCRIPT_URL + '?action=load&_=' + Date.now(), { cache:'no-store' });
+      const json = await res.json();
+      if(json && json.ok) return { ok:true, data: json.data };
+      return { ok:false, error:'Backend returned an error loading data.' };
+    }catch(e){
+      return { ok:false, error:'Could not reach the backend — check APPS_SCRIPT_URL. ('+(e.message||e)+')' };
+    }
+  };
+  const result = await withRetry(attempt);
+  if(result.ok) return result.data;
+  showToast(result.error, 6000);
+  return null;
+}
+async function loadData(){
+  const data = await fetchDataFromBackend();
+  if(data){ dataIsLive = true; return data; }
+  // Empty-seed fallback is only appropriate on the very first load, when
+  // there's no existing dashboard state to protect. See the auto-refresh
+  // handler below for why a failed refresh must NOT reach this path.
+  // dataIsLive=false drives the red "offline / not live" banner in
+  // render() — this fallback must NEVER be silently indistinguishable
+  // from real data again; that silence is exactly what made a cold-start
+  // failure look like "the dashboard wiped my data."
+  dataIsLive = false;
+  return { transactions: makeSeedTransactions(), auditLog: [
+    {timestamp:new Date().toISOString(), user:'System', role:'System', action:'Backend unreachable — showing empty local state', transaction:'—', prevStatus:'—', newStatus:'—', remarks:''}
+  ], uploadLog: [], saleWindows: [
+    { id:'SW00001', start:'2026-09-02', end:'2026-09-06', note:'September 2026 Sale Days (offline fallback default)', addedBy:'System', addedOn:new Date().toISOString() }
+  ], lastUploadTs: null };
+}
+// Server-side login: password ONLY. The backend scans the Credentials
+// sheet for EVERY row matching this password — a person can legitimately
+// hold more than one role under one code (Regional Manager who is also
+// Cluster Manager of their own cluster) — and tells us all of them.
+// Returns {ok:true, matches} on success, {ok:false, wrongPassword:true}
+// for a genuine bad password, or {ok:false, error} for anything else
+// (network/server failure) — the gate handler needs to tell these apart
+// so "your password is fine, the server just hiccuped" never gets shown
+// to someone as "incorrect password," which wastes their time re-typing
+// something that was never wrong.
+async function verifyPasswordLogin(password){
+  const attempt = async ()=>{
+    try{
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method:'POST',
+        headers:{'Content-Type':'text/plain;charset=utf-8'},
+        body: JSON.stringify({ action:'loginByPassword', secret: SHARED_SECRET, password })
+      });
+      const json = await res.json();
+      if(json && json.ok && json.matches && json.matches.length) return { ok:true, matches: json.matches };
+      // A clean "no match" response is {ok:false} with NO error field —
+      // that's the backend cleanly saying "this password matches
+      // nothing," and retrying won't change a deterministic no. Anything
+      // with an `error` field (or a malformed response) is the OTHER
+      // case — a genuine server-side exception — and gets treated as
+      // retryable below, NOT as a wrong password. Conflating these two
+      // was the actual bug: a real server hiccup was being shown to
+      // people as "incorrect password" even when they'd typed it right.
+      if(json && json.ok===false && !json.error) return { ok:true, wrongPassword:true };
+      return { ok:false, error: (json&&json.error) || 'Server returned an unexpected response.' };
+    }catch(e){
+      return { ok:false, error:'Could not reach the backend to verify login. ('+(e.message||e)+')' };
+    }
+  };
+  const result = await withRetry(attempt);
+  if(result.wrongPassword) return { matches:null, wrongPassword:true };
+  if(result.ok) return { matches: result.matches };
+  showToast(result.error, 6000);
+  return { matches:null, wrongPassword:false };
+}
+// How many saves are currently in flight. Every save site below now
+// AWAITS this instead of firing it and moving on — previously the app
+// called saveData(DATA) and immediately kept going, so a refresh (or the
+// 60s auto-refresh GET) could land while Apps Script was still mid-way
+// through clearing and rewriting the Transactions/LineItems sheets, and
+// the read would come back looking like the data had been wiped. The
+// beforeunload guard below stops that specific case at the browser level
+// too: you cannot navigate away or refresh while a save is still pending.
+let pendingSaveCount = 0;
+window.addEventListener('beforeunload', function(e){
+  if(pendingSaveCount > 0){
+    e.preventDefault();
+    e.returnValue = 'A change is still saving — leaving now may lose it.';
+    return e.returnValue;
+  }
+});
+// Every write below goes through this. It sends ONLY the rows a given
+// action actually changed — never the whole transactions/audit/upload
+// dataset — and the backend (Code.gs) patches/appends just those rows.
+// This is what makes concurrent users safe: if a store submits a draft
+// at the same moment Admin is mid-upload, each save touches its own
+// row(s) only, so neither can silently overwrite the other's change.
+// (Sending the FULL in-memory DATA blob on every save — which this
+// build used to do — meant whoever's save landed second overwrote
+// everyone else's save with the stale snapshot their own browser had
+// loaded. That was the real "multiple users, data disappears" risk.)
+async function postAction(action, data){
+  pendingSaveCount++;
+  renderSaveIndicator();
+  try{
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'}, // plain text avoids a CORS preflight Apps Script can't answer
+      body: JSON.stringify({ action, secret: SHARED_SECRET, data })
+    });
+    const json = await res.json();
+    if(!json || !json.ok){
+      // Users just need to know it wasn't saved and who to call — the
+      // technical cause (outdated deployment) is for the administrator.
+      // Every backend failure gets the same plain message; the detail
+      // goes to the browser console for the admin to read if asked.
+      console.error('Save failed for action "'+action+'":', json && json.error ? json.error : 'unknown error');
+      showToast('This change could not be saved. Please contact the administrator.', 8000);
+      return false;
+    }
+    return true;
+  }catch(e){
+    showToast('Save failed — changes may not persist. ('+(e.message||e)+')', 8000);
+    return false;
+  }finally{
+    pendingSaveCount--;
+    renderSaveIndicator();
+  }
+}
+// Legacy full-resync path — no longer called by any action below, kept
+// only in case you ever need to force-overwrite the whole sheet (e.g.
+// restoring from a backup blob). Do NOT wire this back into per-action
+// saves; that's the bug that caused the concurrent-user overwrite risk.
+async function saveData(data){ return postAction('save', data); }
+// One or more transactions changed (checkbox, remarks, reason, draft
+// submit) but no review round and no new rows — patches just those
+// transaction rows plus any new audit entries.
+async function patchTransactions(txns, auditEntries){
+  return postAction('patchTransactions', { transactions: txns, auditEntries: auditEntries||[] });
+}
+// A Cluster Manager decision (sign off / send for re-review): patches the
+// one transaction row, appends exactly one new ReviewHistory row, and one
+// audit entry.
+async function saveReviewDecision(txn, reviewEntry, auditEntry){
+  return postAction('reviewDecision', { transaction: txn, reviewEntry, auditEntry });
+}
+// Admin upload: appends brand-new transaction + line-item rows (these IDs
+// never existed before, so there's nothing to collide with) plus one
+// upload-log row and one audit entry.
+async function saveUpload(newTxns, uploadLogEntry, auditEntry){
+  return postAction('appendUpload', { transactions: newTxns, uploadLogEntry, auditEntry });
+}
+// Same as saveUpload but returns the backend's JSON so the server's own
+// duplicate count (rows it skipped) is available to the caller.
+async function saveUploadJson(newTxns, uploadLogEntry, auditEntry){
+  pendingSaveCount++; renderSaveIndicator();
+  try{
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'appendUpload', secret: SHARED_SECRET, data:{ transactions:newTxns, uploadLogEntry, auditEntry } })
+    });
+    return await res.json();
+  }catch(e){ return { ok:false, error:String(e.message||e) }; }
+  finally{ pendingSaveCount--; renderSaveIndicator(); }
+}
+async function removeUpload(uploadId){
+  const batchTxns = DATA.transactions.concat(adminArchivedFetched).filter(t=>t.uploadId===uploadId);
+  if(!batchTxns.length){ showToast('Nothing to remove — this upload has no transactions on file.'); return; }
+  const dates = [...new Set(batchTxns.map(t=>t.date))].sort();
+  const dateInput = dates.length>1
+    ? prompt(`This upload spans ${dates.length} date(s): ${dates.join(', ')}.\n\nEnter one date (YYYY-MM-DD) to remove only that date, or leave blank to remove the whole upload:`, '')
+    : '';
+  if(dateInput===null) return; // cancelled
+  const date = dateInput.trim() || null;
+  if(date && !dates.includes(date)){ showToast('This upload has no transactions dated '+date+'.'); return; }
+  const scoped = date ? batchTxns.filter(t=>t.date===date) : batchTxns;
+  const stillMoving = scoped.filter(t=>t.status!=='Not Submitted' && t.status!=='No Action Needed');
+  if(stillMoving.length){
+    showToast(stillMoving.length+' of '+scoped.length+' transaction(s)'+(date?' dated '+date:'')+' have already been submitted or reviewed — remove is only allowed while every matched row is still Not Submitted.', 6000);
+    return;
+  }
+  if(!confirm(`Remove ${scoped.length} transaction(s)${date?' dated '+date:''}? This will be permanently deleted from the sheet. This cannot be undone.`)) return;
+  const result = await postAction('removeUpload', { uploadId, date });
+  if(result){
+    // Drop only the matched ones locally so the screen updates without waiting on a reload.
+    const removedIds = new Set(scoped.map(t=>t.id));
+    DATA.transactions = DATA.transactions.filter(t=>!removedIds.has(t.id));
+    adminArchivedFetched = adminArchivedFetched.filter(t=>!removedIds.has(t.id));
+    const log = DATA.uploadLog.find(u=>u.uploadId===uploadId);
+    const anyLeft = DATA.transactions.some(t=>t.uploadId===uploadId);
+    if(log) log.status = anyLeft ? 'Partially Removed' : 'Removed';
+    showToast(`${scoped.length} transaction(s) removed.`);
+    render();
+  }
+}
+// Override for test batches where some rows have already been
+// submitted/reviewed/signed off — normal removeUpload refuses these on
+// purpose. This bypasses that, but only with a written reason, and the
+// backend logs exactly what it deleted (ID/Txn No./Store/Status for every
+// row) into the Audit Trail BEFORE deleting, so the data isn't gone
+// without a trace even though the rows themselves are.
+async function forceRemoveUpload(uploadId){  const batchTxns = DATA.transactions.concat(adminArchivedFetched).filter(t=>t.uploadId===uploadId);
+  if(!batchTxns.length){ showToast('Nothing to remove — this upload has no transactions on file.'); return; }
+  const dates = [...new Set(batchTxns.map(t=>t.date))].sort();
+  const dateInput = dates.length>1
+    ? prompt(`This upload spans ${dates.length} date(s): ${dates.join(', ')}.\n\nEnter one date (YYYY-MM-DD) to force-remove only that date, or leave blank to force-remove the whole upload:`, '')
+    : '';
+  if(dateInput===null) return; // cancelled
+  const date = dateInput.trim() || null;
+  if(date && !dates.includes(date)){ showToast('This upload has no transactions dated '+date+'.'); return; }
+  const scoped = date ? batchTxns.filter(t=>t.date===date) : batchTxns;
+  const reason = prompt(`Force-removing ${scoped.length} transaction(s)${date?' dated '+date:''}, some already submitted/reviewed. This bypasses the normal protection. TEST DATA ONLY.\n\nEnter a reason (required) to continue:`);
+  if(reason===null) return; // cancelled
+  if(!reason.trim()){ showToast('A reason is required to force-remove.'); return; }
+  if(!confirm(`Confirm: permanently delete ${scoped.length} transaction(s)${date?' dated '+date:''}? This cannot be undone.`)) return;
+  const result = await postAction('forceRemoveUpload', { uploadId, reason, actor:'Admin', date });
+  if(result){
+    const removedIds = new Set(scoped.map(t=>t.id));
+    DATA.transactions = DATA.transactions.filter(t=>!removedIds.has(t.id));
+    adminArchivedFetched = adminArchivedFetched.filter(t=>!removedIds.has(t.id));
+    const log = DATA.uploadLog.find(u=>u.uploadId===uploadId);
+    const anyLeft = DATA.transactions.some(t=>t.uploadId===uploadId);
+    if(log) log.status = anyLeft ? 'Partially Force Removed' : 'Force Removed';
+    showToast(`${scoped.length} transaction(s) force-removed.`);
+    render();
+  }
+}
+async function addSaleWindowRemote(start, end, note){
+  if(!start || !end){ showToast('Both a start and end date are required.'); return; }
+  if(end<start){ showToast('End date is before start date.'); return; }
+  const overlap = (DATA.saleWindows||[]).some(w => !(end<w.start || start>w.end));
+  if(overlap && !confirm('This overlaps an existing sale window. Add it anyway?')) return;
+  const result = await postAction('addSaleWindow', { start, end, note, addedBy:'Admin' });
+  if(result){
+    // Re-pull from server rather than guessing the new ID locally — this
+    // table is small and rarely changed, so the extra round trip is cheap
+    // and guarantees the ID shown matches what's actually on the Sheet.
+    const fresh = await fetchDataFromBackend();
+    if(fresh) DATA.saleWindows = fresh.saleWindows;
+    showToast('Sale window added.');
+    render();
+  }
+}
+async function deleteSaleWindowRemote(id){
+  const w = (DATA.saleWindows||[]).find(x=>x.id===id);
+  if(!w){ showToast('Sale window not found.'); return; }
+  if(!confirm(`Remove the sale window ${w.start} to ${w.end}${w.note?' ('+w.note+')':''}? Transactions already imported under it keep their existing category — this only affects future uploads.`)) return;
+  const result = await postAction('deleteSaleWindow', { id });
+  if(result){
+    DATA.saleWindows = (DATA.saleWindows||[]).filter(x=>x.id!==id);
+    showToast('Sale window removed.');
+    render();
+  }
+}
+// Physically moves Signed Off / No Action Needed transactions to the
+// Archive sheets — see archiveOldTransactions in Code.gs. Doesn't touch
+// anything already in memory (those transactions were already excluded
+// from the main load), this only changes where the backend stores them,
+// which is what keeps the live sheet fast as history grows. Uses its own
+// fetch rather than postAction() because it needs the actual counts back
+// (archived/lineItems/reviewRounds/remaining), not just a plain success
+// boolean.
+async function archiveNow(){
+  const btn = document.getElementById('archiveNowBtn');
+  const resultEl = document.getElementById('archiveNowResult');
+  if(btn){ btn.disabled = true; btn.textContent = 'Archiving...'; }
+  pendingSaveCount++; renderSaveIndicator();
+  try{
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'archiveOldTransactions', secret: SHARED_SECRET, data:{} })
+    });
+    const json = await res.json();
+    if(json && json.ok){
+      if(resultEl) resultEl.textContent = json.archived===0
+        ? 'Nothing to archive — the live sheet has no Signed Off / No Action Needed rows left.'
+        : `Archived ${json.archived} transaction(s), ${json.lineItems} line item(s), ${json.reviewRounds} review round(s).${json.remaining>0?` ${json.remaining} more remain — click Archive Now again.`:''}`;
+      showToast(json.archived>0 ? `Archived ${json.archived} transaction(s).` : 'Nothing to archive.');
+    } else {
+      showToast((json&&json.error)||'Archive failed.', 6000);
+    }
+  }catch(e){
+    showToast('Could not reach the backend to archive. ('+(e.message||e)+')', 6000);
+  }finally{
+    pendingSaveCount--; renderSaveIndicator();
+    if(btn){ btn.disabled = false; btn.textContent = 'Archive Now'; }
+  }
+}
+// Test-data cleanup: clears Store Approval / Store & Cluster Remarks /
+// Reason / review history on ONE transaction and sets it back to Not
+// Submitted. Does not delete the transaction row itself, and does not
+// touch anything else from the same store or upload — this is for
+// undoing your own test clicks (approve/remarks/sign-off), not a bulk
+// wipe. Logged as a normal audit entry, same as every other action.
+async function resetTransactionByAdmin(query){
+  const q = (query||'').trim();
+  if(!q){ showToast('Enter a Transaction No. or ID first.'); return; }
+  const t = DATA.transactions.concat(adminArchivedFetched).find(x=>x.id===q || x.transactionNumber===q);
+  if(!t){ showToast('No transaction found with that Transaction No. or ID — if it\'s Signed Off or No Action Needed, click "Fetch Archived Data" with the right date range first.'); return; }
+  if(t.status==='Not Submitted' && !t.storeRemarks && !t.clusterRemarks && !t.reason){
+    showToast(`${t.transactionNumber} is already at its default state — nothing to reset.`);
+    return;
+  }
+  if(!confirm(`Reset transaction ${t.transactionNumber} (${t.storeCode})? This clears approval, remarks, reason and review history, and sets it back to Not Submitted. This cannot be undone.`)) return;
+  const ok = await postAction('resetTransaction', { id: t.id, resetBy: 'Admin' });
+  if(ok){
+    t.storeApproval=false; t.storeRemarks=''; t.reason=''; t.reasonRemarks=''; t.clusterRemarks='';
+    t.status='Not Submitted'; t.submittedDate=null; t.reviewedDate=null; t.reviewHistory=[]; t.archived=false;
+    t.lastUpdated=new Date().toISOString(); t.lastUpdatedBy='Admin (reset)';
+    // If this came from the archived fetch, it's active again now — move
+    // it into DATA.transactions so Store Entry / Cluster Queue see it,
+    // and drop it from the archived list so it isn't shown twice.
+    if(!DATA.transactions.some(x=>x.id===t.id)){
+      adminArchivedFetched = adminArchivedFetched.filter(x=>x.id!==t.id);
+      DATA.transactions.push(t);
+    }
+    showToast(`Transaction ${t.transactionNumber} reset to Not Submitted.`);
+    render();
+  }
+}
+// Repairs a transaction whose Status doesn't match its own latest review
+// round — e.g. history shows "Signed Off" but Status is stuck at
+// "Awaiting Review", from a save that appended the review round but
+// didn't persist the status update. Only Status (and Reviewed Date, if
+// syncing to Signed Off) changes — remarks and every review round stay
+// exactly as they are.
+async function reconcileTxnStatus(query){
+  const q = (query||'').trim();
+  if(!q){ showToast('Enter a Transaction No. or ID first.'); return; }
+  const t = DATA.transactions.concat(adminArchivedFetched).find(x=>x.id===q || x.transactionNumber===q);
+  if(!t){ showToast('No transaction found with that Transaction No. or ID — if it\'s Signed Off or No Action Needed, click "Fetch Archived Data" with the right date range first.'); return; }
+  const latest = (t.reviewHistory||[]).slice().sort((a,b)=>a.round-b.round).pop();
+  if(!latest){ showToast(`${t.transactionNumber} has no review history to reconcile against.`); return; }
+  const correctStatus = latest.decision==='Signed Off' ? 'Signed Off' : latest.decision==='Re-Review' ? 'Re-Review' : null;
+  if(!correctStatus){ showToast(`Latest review round has an unrecognized decision: ${latest.decision}`); return; }
+  if(t.status===correctStatus){ showToast(`${t.transactionNumber}'s status already matches its latest review round — nothing to fix.`); return; }
+  if(!confirm(`${t.transactionNumber} is showing "${t.status}" but its latest review round (round ${latest.round}, by ${latest.by||'—'}) says "${latest.decision}". Set Status to "${correctStatus}"? Remarks and review history are not touched.`)) return;
+  const result = await postAction('reconcileTransactionStatus', { id: t.id });
+  if(result){
+    t.status = correctStatus;
+    if(correctStatus==='Signed Off') t.reviewedDate = latest.date ? latest.date.slice(0,10) : new Date().toISOString().slice(0,10);
+    t.lastUpdated = new Date().toISOString();
+    showToast(`${t.transactionNumber} status corrected to "${correctStatus}".`);
+    render();
+  }
+}
+function renderSaveIndicator(){
+  const box = document.getElementById('clockBox');
+  if(!box) return;
+  box.dataset.saving = pendingSaveCount>0 ? '1' : '0';
+  const flag = document.getElementById('savingFlag');
+  if(flag) flag.style.display = pendingSaveCount>0 ? 'inline' : 'none';
+}
+// Server-side credential check. role: 'store' | 'cluster' | 'regional' | 'admin'.
+// identifier: store code / cluster manager name / region name / admin username.
+async function verifyLogin(role, identifier, password){
+  try{
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'login', secret: SHARED_SECRET, role, identifier, password })
+    });
+    const json = await res.json();
+    return !!(json && json.ok);
+  }catch(e){
+    showToast('Could not reach the backend to verify login. ('+(e.message||e)+')', 6000);
+    return false;
+  }
+}
+function addAudit(entry){
+  const full = Object.assign({timestamp:new Date().toISOString()}, entry);
+  DATA.auditLog.unshift(full);
+  if(DATA.auditLog.length>500) DATA.auditLog.length = 500;
+  return full; // callers use this to send the SAME entry to the backend, scoped, instead of the whole log
+}
+
+/* =========================================================
+   HELPERS
+   ========================================================= */
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function money(n){ return 'Rs ' + Number(n||0).toLocaleString('en-PK',{maximumFractionDigits:0}); }
+function fmtDate(d){ if(!d) return '—'; const dt=new Date(d+'T00:00:00'); return dt.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
+function fmtDateTime(iso){ const dt=new Date(iso); return dt.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})+' '+dt.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); }
+function fmtBarcodes(list){
+  if(!list || !list.length) return '—';
+  const shown = list.slice(0,3).map(b=>esc(b.barcode)+(b.qty>1?` (x${b.qty})`:''));
+  const extra = list.length>3 ? ` <span class="mono">+${list.length-3} more</span>` : '';
+  return `<span class="mono">${shown.join(', ')}</span>${extra}`;
+}
+function badge(status){
+  const map={'Not Submitted':'st-not','Awaiting Review':'st-await','Re-Review':'st-rereview','Signed Off':'st-signed','No Action Needed':'st-noaction'};
+  return `<span class="badge ${map[status]||'st-not'}">${esc(status)}</span>`;
+}
+// Refund transactions of Rs 500 or less are kept on the Sheet (nothing is
+// ever deleted or skipped at import) but hidden from every compliance
+// view and count — Store Entry, Cluster Review, Regional Insights, and
+// HQ Dashboard. This is the single place that rule lives; txnsFor() and
+// the HQ view's own filter both route through it, so there's nowhere
+// left that shows these except a direct read of the raw Sheet data.
+function isHiddenLowValueRefund(t){
+  return t.category==='refund' && t.amount<=500;
+}
+function txnsFor(filterFn){ return DATA.transactions.filter(t=>!isHiddenLowValueRefund(t) && filterFn(t)); }
+function showToast(msg, ms=3200){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.remove('hide');
+  clearTimeout(showToast._h);
+  showToast._h=setTimeout(()=>t.classList.add('hide'), ms);
+}
+
+/* =========================================================
+   RENDER: SHELL
+   ========================================================= */
+const NAV_ITEMS = [
+  ['hq','HQ Dashboard'],
+  ['store','Store Entry'],
+  ['cluster','Cluster Review'],
+  ['regional','Regional Manager Insights'],
+  ['admin','Admin / Upload'],
+];
+
+// Which nav tabs a role is allowed to see/use, keyed the same as
+// NAV_ITEMS. Only called once render() has already confirmed someone is
+// logged in (see isLoggedIn() / render()) — there is no "nobody logged
+// in yet" case here anymore, so there's nothing to leak.
+// Which nav tabs a role is allowed to see/use, keyed the same as
+// NAV_ITEMS. Only called once render() has already confirmed someone is
+// logged in (see isLoggedIn() / render()). This is a UNION of every role
+// currently unlocked, not a first-match priority chain — a dual-role
+// login (Regional Manager who is also Cluster Manager of their own
+// cluster) unlocks BOTH roles at once (see the password gate handler),
+// so they need both roles' tabs, not whichever came first.
+function permittedTabs(){
+  if(adminAuth.unlocked) return ['hq','store','cluster','regional','admin'];
+  const tabs = new Set();
+  if(storeAuth.unlocked) tabs.add('store');
+  if(clusterAuth.unlocked) tabs.add('cluster'); // no HQ Dashboard from cluster alone — Cluster Manager is scoped to their own cluster only
+  if(regionalAuth.unlocked){ tabs.add('hq'); tabs.add('regional'); }
+  return [...tabs];
+}
+
+function renderShell(){
+  const allowed = permittedTabs();
+  // If the current screen isn't allowed for whoever is logged in (e.g. a
+  // role just logged out, or logged in as a different role), snap to the
+  // first tab that role is actually allowed to see instead of leaving a
+  // stale/forbidden screen rendered.
+  if(screen!=='admin' && !allowed.includes(screen)) screen = allowed[0];
+  const tabBar = document.getElementById('tabBar');
+  tabBar.innerHTML = NAV_ITEMS.filter(([id])=>allowed.includes(id)).map(([id,label])=>`<button data-nav="${id}" class="${screen===id?'active':''}">${esc(label)}</button>`).join('');
+  tabBar.querySelectorAll('button').forEach(b=>{
+    b.onclick=()=>{ screen=b.dataset.nav; render(); };
+  });
+  renderClock();
+}
+
+function renderClock(){
+  const box = document.getElementById('clockBox');
+  const ts = lastLoadedTs ? fmtDateTime(lastLoadedTs).split(' ').pop() + ', ' + fmtDateTime(lastLoadedTs) : '—';
+  const mm = String(Math.floor(nextRefreshIn/60)).padStart(2,'0');
+  const ss = String(nextRefreshIn%60).padStart(2,'0');
+  box.innerHTML = `Last updated: <b>${lastLoadedTs? fmtDateTime(lastLoadedTs):'—'}</b> · Next refresh in <b>${mm}:${ss}</b>`;
+}
+
+/* =========================================================
+   RENDER: MAIN ROUTER
+   ---------------------------------------------------------
+   Nothing renders — not even the HQ Dashboard tab, which used to be
+   open with zero login — until one of the four auth objects is
+   unlocked. The single password gate below is the ENTIRE app for an
+   unauthenticated visitor.
+   ========================================================= */
+function isLoggedIn(){
+  return adminAuth.unlocked || storeAuth.unlocked || clusterAuth.unlocked || regionalAuth.unlocked;
+}
+function render(){
+  const main = document.getElementById('mainArea');
+  const tabBar = document.getElementById('tabBar');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const offlineBanner = document.getElementById('offlineBanner');
+  if(offlineBanner) offlineBanner.style.display = dataIsLive ? 'none' : 'block';
+  if(!isLoggedIn()){
+    tabBar.innerHTML = '';
+    logoutBtn.style.display = 'none';
+    main.innerHTML = renderPasswordGate();
+    bindDynamicHandlers();
+    renderClock();
+    return;
+  }
+  logoutBtn.style.display = '';
+  renderShell();
+  // Admin, once logged in, can open any Store / Cluster / Regional tab
+  // without a second password — that's the whole point of being Admin.
+  // A default selection is picked automatically the first time so the
+  // view has something to show; each view exposes its own selector (see
+  // renderStoreView / renderClusterView) so Admin can switch between
+  // stores/managers/regions without ever hitting a login gate.
+  if(adminAuth.unlocked){
+    if(!storeAuth.storeCode) storeAuth.storeCode = STORES.filter(s=>!s.closed)[0].code;
+    storeAuth.unlocked = true;
+    if(!clusterAuth.clusterManager) clusterAuth.clusterManager = CLUSTER_MANAGERS[0];
+    clusterAuth.unlocked = true;
+    regionalAuth.unlocked = true;
+  }
+  if(screen==='store') main.innerHTML = renderStoreView();
+  else if(screen==='cluster') main.innerHTML = renderClusterView();
+  else if(screen==='regional') main.innerHTML = renderRegionalView();
+  else if(screen==='hq') main.innerHTML = renderHQView();
+  else if(screen==='admin') main.innerHTML = renderAdminView();
+  bindDynamicHandlers();
+}
+
+function logout(){
+  storeAuth = { unlocked:false, storeCode: OPEN_STORES[0].code, password:'' };
+  clusterAuth = { unlocked:false, clusterManager: CLUSTER_MANAGERS[0], passcode:'' };
+  regionalAuth = { unlocked:false, region: REGIONS[0] };
+  adminAuth = { unlocked:false };
+  openStoreCategory = null;
+  clusterKpiVisible = false;
+  clusterArchivedFetched = [];
+  openClusterCategory = null;
+  hqDataFetched = false;
+  hqArchivedFetched = [];
+  regionalDataFetched = false;
+  regionalArchivedFetched = [];
+  adminDataFetched = false;
+  adminArchivedFetched = [];
+  screen = 'hq';
+  render();
+}
+
+/* =========================================================
+   LOGIN GATE — single password field. The password alone (checked
+   server-side against the Credentials sheet) decides which of the
+   four views below opens; the client never asks "are you a store,
+   cluster, regional or admin user" up front.
+   ========================================================= */
+function renderPasswordGate(){
+  return `
+    <div class="login-gate">
+      <div class="lockicon">🔒</div>
+      <h1>Sapphire Retail — Compliance Access</h1>
+      <p>Enter your access code. What you see next depends on the code — store, cluster, regional or head office.</p>
+      <span class="field-label">Access code</span>
+      <input type="password" id="gatePass" placeholder="Enter your access code" autocomplete="off">
+      <button class="btn" id="gateUnlockBtn">Unlock</button>
+    </div>`;
+}
+
+/* =========================================================
+   STORE VIEW
+   ========================================================= */
+// Which Store Entry category table is currently open — null means none,
+// so nothing renders until the store clicks a button. Module-level (not
+// per-render) so it survives re-renders from other actions (checkbox
+// changes, remark saves) without snapping shut on every keystroke.
+let openStoreCategory = null;
+// Same per-category gating as Store Entry, but for Cluster Review's
+// Review Queue — nothing loads until a category button is clicked.
+let openClusterCategory = null;
+// Cluster Review's KPI grid (mirroring HQ/Admin) is hidden until the
+// Cluster Manager explicitly asks for it — "select a date range and
+// fetch" rather than it being computed and rendered on every visit to
+// the screen, per what was asked for.
+let clusterKpiVisible = false;
+// Populated by the Fetch Data button in Cluster Review — Signed Off /
+// No Action Needed transactions for this cluster's stores, matching
+// whatever date range is set. Empty until Fetch is clicked; reset on
+// manager switch or logout so stale data from a different cluster is
+// never shown.
+let clusterArchivedFetched = [];
+
+function renderStoreView(){
+  const store = storeByCode(storeAuth.storeCode);
+  const mine = txnsFor(t=>t.storeCode===store.code);
+  const dates = [...new Set(mine.map(t=>t.date))].sort();
+  const draftCount = mine.filter(t=>t.status==='Not Submitted').length;
+  const approvedDraftCount = mine.filter(t=>t.status==='Not Submitted' && t.storeApproval).length;
+  const reReviewCount = mine.filter(t=>t.status==='Re-Review').length;
+
+  const categories = ['over30','refund','fullprice','discounted'];
+  // 'No Action Needed' transactions (Full Price on a regular day,
+  // Discounted during a sale) are visibility-only — see needsReview at
+  // import time — so they never appear here for the store to act on,
+  // only in the KPI/summary cards.
+  const actionable = cat => mine.filter(t=>t.category===cat && t.status!=='No Action Needed');
+  const catButtons = categories.map(cat=>{
+    const n = actionable(cat).length;
+    return `<button class="btn sm ${openStoreCategory===cat?'':'secondary'}" data-showcat="${cat}">${esc(CATEGORY_LABEL[cat])} (${n})</button>`;
+  }).join(' ');
+  const openTable = openStoreCategory
+    ? renderStoreCategoryTable(openStoreCategory, actionable(openStoreCategory).sort((a,b)=>a.date<b.date?1:-1), store)
+    : `<p class="locked-note" style="padding:16px 0;">Select a category above to load its transactions. Nothing loads until you choose one.</p>`;
+
+  return `
+    <div class="session-bar">
+      <span>Signed in as <b>${esc(store.name)}</b></span>
+      ${adminAuth.unlocked
+        ? `<select id="adminStoreSwitch" style="margin-left:10px;">${STORES.filter(s=>!s.closed).map(s=>`<option value="${s.code}" ${s.code===store.code?'selected':''}>${esc(s.name)}</option>`).join('')}</select>`
+        : `<a id="storeLockBtn">Lock / switch store</a>`
+      }
+    </div>
+    <div class="panel-head">
+      <div>
+        <h1>${esc(store.name)} — Store Entry</h1>
+        <p>${esc(store.cluster)} · Cluster Manager: ${esc(store.clusterManager)} · ${esc(store.region)}</p>
+      </div>
+      <div id="submitControls">
+        ${draftCount>0 ? renderSubmitControlsInner(approvedDraftCount) : ''}
+      </div>
+    </div>
+    ${reReviewCount>0 ? `<div class="warn-box">${reReviewCount} transaction(s) sent back by the Cluster Manager for re-review — see remarks below and respond.</div>` : ''}
+    <div class="note-box">Core transaction fields (Transaction, Items, Qty, Amount, Payment Method, Date, Barcodes) are populated from the Admin-uploaded Return Report and are always read-only here. Manager must tick "Is Approved by Manager" and add remarks before submitting a draft.</div>
+    <div style="margin:12px 0;display:flex;gap:8px;flex-wrap:wrap;">${catButtons}</div>
+    ${openTable}
+  `;
+}
+
+function renderSubmitControlsInner(approvedDraftCount){
+  return `<button class="btn" id="submitAllBtn" ${approvedDraftCount===0?'disabled':''}>Submit ${approvedDraftCount} approved draft item(s) for Cluster Review</button>
+    ${approvedDraftCount===0 ? `<div class="locked-note" style="margin-top:5px;">Tick "Is Approved by Manager" on at least one draft below to enable submission.</div>` : ''}`;
+}
+
+// Line-level detail: one row per barcode/line-item, not per transaction.
+// Approval / remarks / status / review columns are transaction-level and are
+// only shown on the first line of each transaction (idx===0) to avoid
+// repeating editable controls, but they carry the same transaction id so a
+// multi-line transaction is still approved/remarked as one unit.
+function flattenToLines(rows){
+  const lines = [];
+  rows.forEach(t=>{
+    const items = (t.barcodes && t.barcodes.length) ? t.barcodes : [{barcode:'—', qty:t.qty, amount:t.amount, fullPrice:null}];
+    items.forEach((b,idx)=> lines.push({t, b, idx}));
+  });
+  return lines;
+}
+
+// Maps a category code to the exact label it produces inside
+// matchedCriteria (see the import-time matchedLabels computation) — used
+// to filter OUT a transaction's own category from its risk-flag display,
+// since seeing "Refund" repeated on a row already inside the Refund table
+// tells the reviewer nothing new.
+const CATEGORY_TO_CRITERION_LABEL = { over30:'Over 30 Days', refund:'Refund', fullprice:'Full Price Sale Return', discounted:'Discounted Return' };
+// Renders the "also matches" risk indicator for one transaction, or ''
+// when there's nothing beyond its own assigned category to flag. Shown
+// directly on the row a store fills remarks on / a cluster manager
+// signs off, not just in the separate Multiple Criteria summary card —
+// the whole point is the person acting on THIS transaction sees the risk
+// at the moment they act, not only in a report they may never open.
+function riskFlagCell(t){
+  const others = (t.matchedCriteria||'').split(', ').filter(c=>c && c!==CATEGORY_TO_CRITERION_LABEL[t.category]);
+  if(!others.length) return '—';
+  return `<span class="badge st-rereview" title="This transaction also matches: ${esc(others.join(', '))}">⚠ ${esc(others.join(', '))}</span>`;
+}
+
+function renderStoreCategoryTable(cat, rows, store){
+  // Refund Amount is the money actually leaked to the customer (Return
+  // Value minus Sold Value — see the import-time comment where
+  // complianceAmount is computed) and only differs from raw Return Amount
+  // for the Refund bucket, so it's only shown as its own column there —
+  // Over 30 / Full Price already use a raw value for both.
+  const cols = ['Return Date','Time','Transaction No.','Barcode','Return Qty','Return Amount']
+    .concat(cat==='refund' ? ['Refund Amount'] : [])
+    .concat(['Payment Method'])
+    .concat(cat==='over30' ? ['Aging (days)'] : [])
+    .concat(['Price Type','Original Transaction','Also Matches','Is Approved by Manager','Reason for Return','Store Remarks','Status','Cluster Review','Cluster Manager Review 2','Submit']);
+
+  const lines = flattenToLines(rows);
+
+  const body = lines.length ? lines.map(({t,b,idx})=>{
+    const editable = t.status==='Not Submitted';
+    const respondable = t.status==='Re-Review';
+    const priceTypeLine = b.fullPrice===true ? 'Full Price' : b.fullPrice===false ? 'Discounted' : t.priceType;
+    return `<tr>
+      <td>${fmtDate(t.date)}</td>
+      <td class="mono">${esc(t.time)||"—"}</td>
+      <td class="mono">${esc(t.transactionNumber)}</td>
+      <td class="mono">${esc(b.barcode)}</td>
+      <td class="num-cell">${b.qty}</td>
+      <td class="num-cell">${money(b.amount!=null?b.amount:t.amount)}</td>
+      ${cat==='refund' ? `<td class="num-cell">${idx!==0?'':money(t.amount)}</td>` : ''}
+      <td>${esc(t.paymentMethod||'—')}</td>
+      ${cat==='over30' ? `<td class="num-cell">${t.agingDays==null?'—':t.agingDays}</td>` : ''}
+      <td>${esc(priceTypeLine)}</td>
+      <td class="mono">${esc(t.origTransaction||'—')}</td>
+      <td>${idx!==0 ? '' : riskFlagCell(t)}</td>
+      <td>${idx!==0 ? '' : (editable
+          ? `<select data-approve="${t.id}">
+               <option value="yes" ${t.storeApproval?'selected':''}>Yes</option>
+               <option value="no" ${!t.storeApproval?'selected':''}>No</option>
+             </select>`
+          : (t.storeApproval? 'Yes':'No'))}</td>
+      <td style="min-width:170px;">${idx!==0 ? '' : reasonCell(t, editable)}</td>
+      <td style="min-width:200px;">${idx!==0 ? '' : (
+        editable
+          ? `<textarea data-remark="${t.id}" placeholder="Store remarks...">${esc(t.storeRemarks)}</textarea>`
+          : respondable
+            ? `<div class="remark-locked" style="margin-bottom:5px;"><b>Cluster Manager:</b> ${esc(t.clusterRemarks)}</div><textarea data-respond="${t.id}" placeholder="Your response...">${esc(t.storeRemarks)}</textarea>`
+            : `<div class="remark-locked">${esc(t.storeRemarks)||'—'}</div>`
+      )}</td>
+      <td>${idx!==0 ? '' : (badge(t.status)+(respondable?`<div style="margin-top:6px;"><button class="btn sm" data-resubmit="${t.id}">Resubmit</button></div>`:''))}</td>
+      <td style="min-width:160px;">${idx!==0 ? '' : reviewRoundCell(t,1)}</td>
+      <td style="min-width:160px;">${idx!==0 ? '' : reviewRoundCell(t,2)}</td>
+      <td>${idx!==0 ? '' : (editable ? `<button class="btn sm" data-submitone="${t.id}">Submit</button>` : '')}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="${cols.length}" class="empty">No transactions in this category.</td></tr>`;
+
+  return `
+    <div class="card">
+      <div class="card-head"><h2>${CATEGORY_LABEL[cat]}</h2><span class="count">${rows.length} transaction(s)</span></div>
+      <div class="card-body" style="overflow-x:auto;">
+        <table><thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>
+      </div>
+    </div>`;
+}
+
+// Reason for Return cell: a dropdown when editable, plus a free-text box
+// that only appears when "Other" is selected. Locked to plain text once the
+// transaction is submitted, same as Store Remarks.
+function reasonCell(t, editable){
+  if(!editable){
+    const label = t.reason==='Other' ? `Other — ${esc(t.reasonRemarks)||'(no remarks)'}` : (t.reason||'—');
+    return `<div class="remark-locked">${esc(label)}</div>`;
+  }
+  return `
+    <select data-reason="${t.id}">
+      <option value="">Select reason...</option>
+      ${REASON_OPTIONS.map(r=>`<option value="${esc(r)}" ${t.reason===r?'selected':''}>${esc(r)}</option>`).join('')}
+    </select>
+    ${t.reason==='Other' ? `<textarea data-reasonremarks="${t.id}" placeholder="Remarks for Other..." style="margin-top:6px;">${esc(t.reasonRemarks)}</textarea>` : ''}
+  `;
+}
+
+/* =========================================================
+   CLUSTER MANAGER VIEW
+   ========================================================= */
+// Shared by both Cluster Review (own cluster's stores) and Regional
+// Manager Insights (every store in the region) — same columns, same
+// per-store numbers, purely informational either way (no action inputs
+// live in this table in either view).
+function storeSummaryRows(stores, txns){
+  return stores.map(s=>{
+    const ts = txns.filter(t=>t.storeCode===s.code);
+    const c = st => ts.filter(t=>t.status===st).length;
+    const cat = code => { const g = ts.filter(t=>t.category===code); return {count:g.length, qty:g.reduce((s,t)=>s+t.qty,0), amt:g.reduce((s,t)=>s+t.amount,0)}; };
+    const refund=cat('refund'), over30=cat('over30'), fullprice=cat('fullprice'), discounted=cat('discounted');
+    return `<tr>
+      <td>${esc(s.name)}</td>
+      <td class="num-cell">${refund.count}</td><td class="num-cell">${refund.qty}</td><td class="num-cell">${money(refund.amt)}</td>
+      <td class="num-cell">${over30.count}</td><td class="num-cell">${over30.qty}</td><td class="num-cell">${money(over30.amt)}</td>
+      <td class="num-cell">${fullprice.count}</td><td class="num-cell">${fullprice.qty}</td><td class="num-cell">${money(fullprice.amt)}</td>
+      <td class="num-cell">${discounted.count}</td><td class="num-cell">${discounted.qty}</td><td class="num-cell">${money(discounted.amt)}</td>
+      <td class="num-cell num-green">${c('Signed Off')}</td>
+      <td class="num-cell num-red">${c('Awaiting Review')}</td>
+      <td class="num-cell num-red">${c('Re-Review')}</td>
+      <td class="num-cell num-red">${c('Not Submitted')}</td>
+    </tr>`;
+  }).join('');
+}
+const STORE_SUMMARY_HEAD = `<tr><th>Store</th><th>Refund Txns</th><th>Refund Qty</th><th>Refund Value</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Qty</th><th>Return&gt;30 Value</th><th>Full Price Txns</th><th>Full Price Qty</th><th>Full Price Value</th><th>Discounted Txns</th><th>Discounted Qty</th><th>Discounted Value</th><th>Signed Off</th><th>Awaiting</th><th>Re-Review</th><th>Not Submitted</th></tr>`;
+
+/* =========================================================
+   RETURN REASONS ANALYSIS — shared by HQ, Cluster Review, and
+   Regional Insights. Counts EVERY transaction in scope regardless of
+   submission status (a separate "Not submitted by store" number is
+   shown alongside so a still-pending count doesn't get mistaken for a
+   finalized one) and, same as everywhere else, never shows a refund of
+   Rs 500 or less (see isHiddenLowValueRefund / txnsFor).
+   ========================================================= */
+// Best-effort keyword classifier for "Other" reason free-text remarks —
+// not a real NLP model, just first-match keyword buckets. Expect to
+// refine these once real "Other" remarks come in; anything that matches
+// nothing lands in "Uncategorized", not silently dropped.
+const OTHER_REASON_BUCKETS = [
+  { label:'Wrong item received', keywords:['wrong item','different item','not what i ordered','item mismatch','wrong color','wrong colour'] },
+  { label:'Changed mind / no longer needed', keywords:['changed mind','no longer need',"don't want",'dont want','not needed','not required'] },
+  { label:'Duplicate order / double charge', keywords:['duplicate','double charge','charged twice','ordered twice','billed twice'] },
+  { label:'Late delivery', keywords:['late','delay','took too long','delivery time'] },
+  { label:'Price or discount dispute', keywords:['price','discount','overcharge','cheaper','sale price','promo'] },
+  { label:'Gift return', keywords:['gift','present'] },
+  { label:'Packaging / transit damage', keywords:['transit','shipping damage','box damaged','packaging'] },
+  { label:'Fraud / suspected misuse', keywords:['fraud','misuse','fake','suspicious','counterfeit'] },
+];
+function classifyOtherRemark(text){
+  const t = (text||'').trim();
+  if(!t) return 'No remarks given';
+  const lower = t.toLowerCase();
+  for(const bucket of OTHER_REASON_BUCKETS){
+    if(bucket.keywords.some(k=>lower.includes(k))) return bucket.label;
+  }
+  return 'Uncategorized';
+}
+function renderReasonsCard(scopeTxns, scopeLabel){
+  // 'No Action Needed' transactions (Full Price on a regular day,
+  // Discounted during a sale — see needsReview at import time) never go
+  // through Store Entry and structurally never get a reason recorded —
+  // there was never a form asking for one. Counting them here made
+  // "Reason Not Recorded" balloon to several times the actual pending-
+  // submission count, since every view-only transaction landed in that
+  // bucket alongside the genuinely unrecorded ones. This card is about
+  // why ACTIONABLE returns happen, so view-only transactions are out of
+  // scope for it entirely, not just excluded from one bucket.
+  const visible = scopeTxns.filter(t=>!isHiddenLowValueRefund(t) && t.status!=='No Action Needed');
+  const notSubmitted = visible.filter(t=>t.status==='Not Submitted').length;
+  const counts = {};
+  visible.forEach(t=>{
+    // Covers BOTH cases in one label on purpose: a Not Submitted draft
+    // that hasn't gotten to the reason field yet, and a transaction
+    // that's already been submitted/reviewed with no reason ever
+    // recorded. The two aren't split out here — the "Not submitted by
+    // store" count above already tells you how many are still pending.
+    const r = t.reason && t.reason.trim() ? t.reason : 'Reason Not Recorded';
+    counts[r] = counts[r] || {count:0, qty:0, amt:0};
+    counts[r].count++; counts[r].qty += t.qty; counts[r].amt += t.amount;
+  });
+  const total = visible.length;
+  const maxCount = Math.max(1, ...Object.values(counts).map(c=>c.count));
+  const rows = Object.entries(counts).sort((a,b)=>b[1].count-a[1].count).map(([reason,c])=>{
+    const pct = total ? Math.round(c.count/total*100) : 0;
+    const barPct = Math.round(c.count/maxCount*100);
+    const isOther = reason==='Other';
+    return `<tr ${isOther?'data-reason-toggle="other" style="cursor:pointer;"':''}>
+      <td>${esc(reason)}${isOther?' <span class="locked-note">(click to see remarks)</span>':''}</td>
+      <td class="num-cell">${c.count}</td>
+      <td class="num-cell">${c.qty}</td>
+      <td class="num-cell">${money(c.amt)}</td>
+      <td class="num-cell">${pct}%</td>
+      <td style="min-width:100px;"><div style="background:var(--bg-accent,#dbe7fb);height:10px;border-radius:4px;width:${barPct}%;min-width:2px;"></div></td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="6" class="empty">No transactions in this scope.</td></tr>`;
+
+  const otherByClass = {};
+  visible.filter(t=>t.reason==='Other').forEach(t=>{
+    const cls = classifyOtherRemark(t.reasonRemarks);
+    (otherByClass[cls] = otherByClass[cls]||[]).push(t);
+  });
+  const otherRows = Object.entries(otherByClass).sort((a,b)=>b[1].length-a[1].length).map(([cls,list])=>`
+    <tr>
+      <td>${esc(cls)}</td>
+      <td class="num-cell">${list.length}</td>
+      <td>${list.slice(0,5).map(t=>esc(t.transactionNumber+' ('+t.storeCode+'): '+(t.reasonRemarks||'—'))).join('<br>')}${list.length>5?`<br><span class="locked-note">+${list.length-5} more</span>`:''}</td>
+    </tr>`).join('') || `<tr><td colspan="3" class="empty">No "Other" transactions in this scope.</td></tr>`;
+
+  return `
+    <div class="card">
+      <div class="card-head"><h2>Return Reasons — ${esc(scopeLabel)}</h2></div>
+      <div class="card-body">
+        <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px;">
+          <div><span class="field-label">Total transactions</span><div style="font-size:20px;font-weight:600;">${total}</div></div>
+          <div><span class="field-label">Not submitted by store</span><div style="font-size:20px;font-weight:600;">${notSubmitted}</div></div>
+        </div>
+        <table class="compact-table"><thead><tr><th>Reason</th><th>Txns</th><th>Qty</th><th>Value</th><th>% of total</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table>
+        <div id="otherRemarksTable" style="display:none;margin-top:16px;">
+          <h3 style="font-size:14px;margin:0 0 6px;">"Other" remarks — classified</h3>
+          <table class="compact-table"><thead><tr><th>Classification</th><th>Count</th><th>Sample remarks</th></tr></thead>
+          <tbody>${otherRows}</tbody></table>
+        </div>
+      </div>
+    </div>`;
+}
+
+// Oversight-only view of what's being excluded from every compliance
+// screen by the ≤Rs 500 refund rule — nothing here is deleted, all of it
+// stays on the Google Sheet; this card just makes sure Admin/oversight
+// can still see what's not being counted anywhere else, by name.
+function renderBelowThresholdCard(rawScopeTxns, scopeLabel){
+  const hidden = rawScopeTxns.filter(isHiddenLowValueRefund);
+  const count = hidden.length;
+  const qty = hidden.reduce((s,t)=>s+t.qty,0);
+  const amt = hidden.reduce((s,t)=>s+t.amount,0);
+  return `
+    <div class="card">
+      <div class="card-head"><h2>Refund Transactions ≤Rs 500 — Below Review Threshold</h2></div>
+      <div class="card-body">
+        <p class="locked-note" style="margin-bottom:10px;">Excluded from Store Entry, Cluster Review, Regional Insights and the HQ Dashboard's KPIs and counts — kept on the Sheet, just not reviewed. Scope: ${esc(scopeLabel)}.</p>
+        <div style="display:flex;gap:24px;flex-wrap:wrap;">
+          <div><span class="field-label">Transaction count</span><div style="font-size:20px;font-weight:600;">${count}</div></div>
+          <div><span class="field-label">Total quantity</span><div style="font-size:20px;font-weight:600;">${qty}</div></div>
+          <div><span class="field-label">Total value</span><div style="font-size:20px;font-weight:600;">${money(amt)}</div></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// Highlights transactions that trip MORE THAN ONE compliance signal at
+// once (e.g. genuinely late AND full-price, or a Refund that's also
+// Discounted) — these are exactly the ones the single-category KPI cards
+// structurally can't surface, since a transaction only ever gets ONE
+// `category` via the priority chain (Over 30 > Refund > Full Price >
+// Discounted). This card doesn't change anyone's workflow or add a new
+// review step — it's pure visibility into elevated-risk transactions
+// that are already sitting in whatever category "won."
+function renderMultiCriteriaCard(scopeTxns, scopeLabel){
+  const visible = scopeTxns.filter(t=>!isHiddenLowValueRefund(t));
+  const flagged = visible.filter(t=>t.matchedCriteria && t.matchedCriteria.split(', ').length>=2);
+  const qty = flagged.reduce((s,t)=>s+t.qty,0);
+  const amt = flagged.reduce((s,t)=>s+t.amount,0);
+  return `
+    <div class="card">
+      <div class="card-head"><h2>Multiple Criteria — Elevated Risk</h2><span class="count">${esc(scopeLabel)}</span></div>
+      <div class="card-body">
+        <p class="locked-note" style="margin-bottom:10px;">Distinct transaction count, quantity and value for transactions matching two or more compliance signals at once — a summary only. Which specific criteria overlap on any one transaction is shown directly against it in Store Entry (for store remarks) and the Cluster Review Queue (for sign-off), not repeated here as a list.</p>
+        <div class="grid kpis" style="grid-template-columns:repeat(3,1fr);">
+          <div class="kpi accent"><div class="num">${flagged.length}</div><div class="lbl">Distinct Transactions</div></div>
+          <div class="kpi accent"><div class="num">${qty}</div><div class="lbl">Total Quantity</div></div>
+          <div class="kpi accent"><div class="num">${money(amt)}</div><div class="lbl">Total Value</div></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// Same KPI grid as HQ/Admin, reused here so Cluster Manager gets an
+// HQ-style view of their OWN cluster's data — gated behind the Fetch
+// button in renderClusterView, not shown automatically.
+function renderClusterKpiGrid(txns, scopeLabel){
+  const visible = txns.filter(t=>!isHiddenLowValueRefund(t));
+  const bucket = b => visible.filter(t=>statusBucket(t.status)===b).length;
+  const catKpi = cat=>{
+    const ts = visible.filter(t=>t.category===cat);
+    return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)};
+  };
+  const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice'), discounted=catKpi('discounted');
+  kpiDrilldown = {
+    total: visible,
+    signedoff: visible.filter(t=>statusBucket(t.status)==='Signed Off'),
+    notstarted: visible.filter(t=>statusBucket(t.status)==='Not Started'),
+    openitems: visible.filter(t=>statusBucket(t.status)==='Open Items'),
+    noactionneeded: visible.filter(t=>t.status==='No Action Needed'),
+    refund: visible.filter(t=>t.category==='refund'),
+    over30: visible.filter(t=>t.category==='over30'),
+    fullprice: visible.filter(t=>t.category==='fullprice'),
+    discounted: visible.filter(t=>t.category==='discounted'),
+  };
+  return `
+    <div class="grid kpi-status" style="grid-template-columns:repeat(5,1fr);">
+      <div class="kpi" data-kpi="total"><div class="num">${visible.length}</div><div class="lbl">Total Transactions</div></div>
+      <div class="kpi status-done" data-kpi="signedoff"><div class="num num-green">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
+      <div class="kpi status-pending" data-kpi="notstarted"><div class="num num-red">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
+      <div class="kpi status-pending" data-kpi="openitems"><div class="num num-red">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
+    </div>
+    <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px;">
+      <div class="kpi accent" data-kpi="refund"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
+      <div class="kpi accent" data-kpi="over30"><div class="num">${over30.count}</div><div class="lbl">Return &gt;30 Days Transactions · Qty ${over30.qty} · ${money(over30.amt)}</div></div>
+      <div class="kpi accent" data-kpi="fullprice"><div class="num">${fullprice.count}</div><div class="lbl">Full Price Sale Return Transactions · Qty ${fullprice.qty} · ${money(fullprice.amt)}</div></div>
+      <div class="kpi accent" data-kpi="discounted"><div class="num">${discounted.count}</div><div class="lbl">Discounted Sale Return Transactions · Qty ${discounted.qty} · ${money(discounted.amt)}</div></div>
+    </div>`;
+}
+
+function renderClusterView(){
+  const mgr = clusterAuth.clusterManager;
+  const stores = STORES.filter(s=>s.clusterManager===mgr && !s.closed);
+  const codes = stores.map(s=>s.code);
+  const all = txnsFor(t=>codes.includes(t.storeCode));
+  const allRaw = DATA.transactions.filter(t=>codes.includes(t.storeCode)); // includes hidden ≤500 refunds, for the Below Threshold card only
+  const f = clusterFilters;
+
+  // Nothing below this point computes or renders until Fetch Data is
+  // clicked — clusterKpiVisible gates the Store Summary, KPI grid, AND
+  // the Review Queue together now. Before that, only the lightweight
+  // page shell (filters + button) exists.
+  if(!clusterKpiVisible){
+    return `
+      <div class="session-bar">
+        <span>Reviewing as <b>${esc(mgr)}</b></span>
+        ${adminAuth.unlocked
+          ? `<select id="adminClusterSwitch" style="margin-left:10px;">${CLUSTER_MANAGERS.map(m=>`<option value="${esc(m)}" ${m===mgr?'selected':''}>${esc(m)}</option>`).join('')}</select>`
+          : `<a id="clusterLockBtn">Lock / switch manager</a>`
+        }
+      </div>
+      <div class="panel-head">
+        <div><h1>Cluster Review — ${esc(mgr)}</h1><p>${stores.map(s=>s.name).join(', ')}</p></div>
+      </div>
+      <div class="filters-grid" style="max-width:420px;">
+        <div><span class="field-label">From date</span><input type="date" id="cFDateFrom" value="${f.dateFrom||''}"></div>
+        <div><span class="field-label">To date</span><input type="date" id="cFDateTo" value="${f.dateTo||''}"></div>
+        <div style="align-self:end;"><button class="btn sm secondary" id="cFClearBtn">Clear dates</button></div>
+      </div>
+      <p class="locked-note" style="margin:10px 0 14px;">Leave both dates blank and click Fetch to see everything. With a date range set, the Review Queue below will ONLY show pending items dated inside that range — periodically fetch with no dates set to make sure nothing outside your usual window is waiting on you.</p>
+      <button class="btn sm" id="clusterFetchKpiBtn">Fetch Data</button>
+    `;
+  }
+
+  // Date range applies to the Store Summary counts AND, now, to the
+  // Review Queue as well — previously the Queue always ignored this
+  // filter on purpose (compliance safety net: nothing pending should be
+  // hidable by a forgotten filter). That protection is intentionally
+  // removed here per explicit request — the tradeoff is stated plainly
+  // above, next to the date fields, instead of being silent.
+  const summaryScope = all.filter(t=>{
+    if(f.dateFrom && t.date<f.dateFrom) return false;
+    if(f.dateTo && t.date>f.dateTo) return false;
+    return true;
+  });
+  // KPI grid needs archived (Signed Off / No Action Needed) history too,
+  // which the main load no longer carries — clusterArchivedFetched is
+  // populated by the Fetch Data button's own network call and merged in
+  // here only for the numbers, never for the Review Queue (archived
+  // transactions can never be 'Awaiting Review' anyway).
+  const kpiScope = summaryScope.concat(clusterArchivedFetched.filter(t=>codes.includes(t.storeCode)));
+
+  const summaryRows = storeSummaryRows(stores, summaryScope);
+
+  const CATEGORY_ORDER = ['refund','over30','fullprice','discounted'];
+  const queueAll = summaryScope.filter(t=>t.status==='Awaiting Review');
+  const categoryCounts = {};
+  CATEGORY_ORDER.forEach(cat=>{ categoryCounts[cat] = queueAll.filter(t=>t.category===cat).length; });
+  const catButtons = CATEGORY_ORDER.map(cat=>
+    `<button class="btn sm ${openClusterCategory===cat?'':'secondary'}" data-showclustercat="${cat}">${esc(CATEGORY_LABEL[cat])} (${categoryCounts[cat]})</button>`
+  ).join(' ');
+  const queue = openClusterCategory ? queueAll.filter(t=>t.category===openClusterCategory).sort((a,b)=>a.date<b.date?1:-1) : [];
+  const queueLines = flattenToLines(queue);
+  const QUEUE_COLS = 19;
+
+  const queueRows = queueLines.length ? queueLines.map(({t,b,idx})=>{
+    const store = storeByCode(t.storeCode);
+    const priceTypeLine = b.fullPrice===true ? 'Full Price' : b.fullPrice===false ? 'Discounted' : t.priceType;
+    return `<tr>
+      <td>${idx!==0?'':esc(store.name)}</td>
+      <td>${fmtDate(t.date)}</td>
+      <td class="mono">${esc(t.time)||"—"}</td>
+      <td class="mono">${esc(t.transactionNumber)}</td>
+      <td class="mono">${esc(b.barcode)}</td>
+      <td class="num-cell">${b.qty}</td>
+      <td class="num-cell">${money(b.amount!=null?b.amount:t.amount)}</td>
+      <td class="num-cell">${(idx!==0||t.category!=='refund')?'—':money(t.amount)}</td>
+      <td>${esc(t.paymentMethod||'—')}</td>
+      <td>${esc(priceTypeLine)}</td>
+      <td class="mono">${esc(t.origTransaction||'—')}</td>
+      <td>${idx!==0?'':riskFlagCell(t)}</td>
+      <td>${idx!==0?'':esc(t.reason==='Other'?`Other — ${t.reasonRemarks||'(no remarks)'}`:(t.reason||'—'))}</td>
+      <td>${idx!==0?'':`<div class="remark-locked">${esc(t.storeRemarks)||'—'}</div>`}</td>
+      <td>${idx!==0?'':badge(t.status)}</td>
+      <td style="min-width:160px;">${idx!==0?'':reviewRoundCell(t,1)}</td>
+      <td style="min-width:160px;">${idx!==0?'':reviewRoundCell(t,2)}</td>
+      <td style="min-width:200px;">${idx!==0?'':`<textarea data-clusterremark="${t.id}" placeholder="Cluster Manager remarks...">${esc(t.clusterRemarks)}</textarea>`}</td>
+      <td style="white-space:nowrap;">${idx!==0?'':`
+        <button class="btn sm" data-signoff="${t.id}">Sign Off</button>
+        <button class="btn sm danger" data-rereview="${t.id}">Re-Review</button>
+      `}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="${QUEUE_COLS}" class="empty">No transactions awaiting review.</td></tr>`;
+
+  return `
+    <div class="session-bar">
+      <span>Reviewing as <b>${esc(mgr)}</b></span>
+      ${adminAuth.unlocked
+        ? `<select id="adminClusterSwitch" style="margin-left:10px;">${CLUSTER_MANAGERS.map(m=>`<option value="${esc(m)}" ${m===mgr?'selected':''}>${esc(m)}</option>`).join('')}</select>`
+        : `<a id="clusterLockBtn">Lock / switch manager</a>`
+      }
+    </div>
+    <div class="panel-head">
+      <div><h1>Cluster Review — ${esc(mgr)}</h1><p>${stores.map(s=>s.name).join(', ')}</p></div>
+    </div>
+    <div class="filters-grid" style="max-width:420px;">
+      <div><span class="field-label">From date</span><input type="date" id="cFDateFrom" value="${f.dateFrom||''}"></div>
+      <div><span class="field-label">To date</span><input type="date" id="cFDateTo" value="${f.dateTo||''}"></div>
+      <div style="align-self:end;"><button class="btn sm secondary" id="cFClearBtn">Clear dates</button></div>
+    </div>
+    <div style="margin:4px 0 14px;">
+      <button class="btn sm" id="clusterFetchKpiBtn">Refresh (apply dates)</button>
+      <button class="btn sm secondary" id="clusterHideKpiBtn" style="margin-left:8px;">Hide / Reset</button>
+    </div>
+    ${renderClusterKpiGrid(kpiScope, mgr)}
+    <div class="locked-note" style="margin:4px 0 12px;">${(f.dateFrom||f.dateTo) ? `Showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'} — including the Review Queue below.` : 'Showing the full cumulative total across every day currently loaded.'}</div>
+    <div class="card">
+      <div class="card-head"><h2>Store Summary</h2></div>
+      <div class="card-body" style="overflow-x:auto;">
+        <table class="compact-table"><thead>${STORE_SUMMARY_HEAD}</thead>
+        <tbody>${summaryRows}</tbody></table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Review Queue</h2><span class="count">${queueAll.length} awaiting</span></div>
+      <div class="card-body">
+        <div style="margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;">${catButtons}</div>
+        ${openClusterCategory ? `
+        <div style="overflow-x:auto;">
+        <table><thead><tr><th>Store</th><th>Return Date</th><th>Time</th><th>Transaction No.</th><th>Barcode</th><th>Return Qty</th><th>Return Amount</th><th>Refund Amount</th><th>Payment Method</th><th>Price Type</th><th>Original Transaction</th><th>Also Matches</th><th>Reason for Return</th><th>Store Remarks</th><th>Status</th><th>Cluster Review</th><th>Cluster Manager Review 2</th><th>Cluster Remarks (this round)</th><th>Action</th></tr></thead>
+        <tbody>${queueRows}</tbody></table>
+        </div>` : `<p class="locked-note" style="padding:10px 0;">Select a category above to load its pending transactions. Nothing loads until you choose one.</p>`}
+      </div>
+    </div>
+    ${renderReasonsCard(kpiScope, mgr)}
+    ${renderMultiCriteriaCard(kpiScope, mgr)}
+    ${renderBelowThresholdCard(allRaw.concat(clusterArchivedFetched.filter(t=>codes.includes(t.storeCode))), mgr)}
+  `;
+}
+
+/* =========================================================
+   REGIONAL VIEW
+   ========================================================= */
+// Shared red/amber/green progress-bar-plus-number cell for any
+// percentage in the dashboard — thresholds: under 60% is red (needs
+// attention), 60–94% is amber (getting there), 95%+ is green (done).
+function pctBarCell(pct){
+  if(pct==null) return '—';
+  const tier = pct>=95 ? 'pb-green' : pct>=60 ? 'pb-amber' : 'pb-red';
+  return `<div class="pct-cell"><span class="pct-num ${tier}">${pct}%</span><span class="pct-bar-track"><span class="pct-bar-fill ${tier}" style="width:${Math.min(100,pct)}%;"></span></span></div>`;
+}
+
+function clusterKpiRow(mgr, stores, txns){
+  // Headline number is distinct TRANSACTION COUNT, not item Qty — a
+  // transaction can carry several line items, so Qty (10) and Txn Count (7)
+  // are genuinely different numbers (matches the skill's own "Txn Count" vs
+  // "Qty" distinction). Showing Qty as the big number was being read as
+  // transaction count and looked wrong against the skill's workbook.
+  const c = cat => { const ts = txns.filter(t=>t.category===cat); return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)}; };
+  const refund=c('refund'), over30=c('over30'), fullprice=c('fullprice'), discounted=c('discounted');
+  const bucket = b => txns.filter(t=>statusBucket(t.status)===b).length;
+  // Completion % is based on the REVIEWABLE workflow only — Signed Off /
+  // (Signed Off + Not Started + Open Items) — deliberately excluding
+  // 'No Action Needed' transactions (Full Price on a regular day,
+  // Discounted during a sale). Those were never part of anyone's review
+  // queue, so counting them would understate or inflate completion
+  // depending on how many of them happen to exist that period, for a
+  // reason that has nothing to do with how much work is actually done.
+  const signedOff = bucket('Signed Off'), notStarted = bucket('Not Started'), openItems = bucket('Open Items');
+  const reviewable = signedOff + notStarted + openItems;
+  const completionPct = reviewable>0 ? Math.round(signedOff/reviewable*100) : null;
+  return `<tr>
+    <td>${esc(mgr)}</td>
+    <td class="num-cell">${stores.length}</td>
+    <td class="num-cell">${refund.count}</td><td class="num-cell">${money(refund.amt)}</td>
+    <td class="num-cell">${over30.count}</td><td class="num-cell">${money(over30.amt)}</td>
+    <td class="num-cell">${fullprice.count}</td><td class="num-cell">${money(fullprice.amt)}</td>
+    <td class="num-cell">${discounted.count}</td><td class="num-cell">${money(discounted.amt)}</td>
+    <td class="num-cell num-green">${signedOff}</td>
+    <td class="num-cell num-red">${notStarted}</td>
+    <td class="num-cell num-red">${openItems}</td>
+    <td class="num-cell">${pctBarCell(completionPct)}</td>
+  </tr>`;
+}
+const CLUSTER_TABLE_HEAD = `<tr><th>Cluster Manager</th><th>Stores</th><th>Refund Txns</th><th>Refund Amt</th><th>Return&gt;30 Txns</th><th>Return&gt;30 Amt</th><th>Full Price Return Txns</th><th>Full Price Return Amt</th><th>Discounted Return Txns</th><th>Discounted Return Amt</th><th>Signed Off</th><th>Not Started</th><th>Open Items</th><th>Completion %</th></tr>`;
+
+let regionalDataFetched = false;
+let regionalArchivedFetched = [];
+let adminFilters = {dateFrom:'', dateTo:''};
+let adminDataFetched = false;
+let adminArchivedFetched = [];
+
+function renderRegionalView(){
+  const region = ctx.region;
+  const stores = STORES.filter(s=>s.region===region && !s.closed);
+  // Unassigned (closed-store placeholder) is not a real cluster manager and
+  // is excluded from the summary — it would otherwise show as a phantom row.
+  const mgrs = [...new Set(stores.map(s=>s.clusterManager))].filter(m=>m!=='Unassigned');
+  const f = regionalFilters;
+
+  if(!regionalDataFetched){
+    return `
+      <div class="session-bar"><span>Signed in for <b>${esc(region)}</b></span><a id="regionalLockBtn">Lock / switch region</a></div>
+      <div class="panel-head">
+        <div><h1>Regional Manager Insights</h1><p>${stores.length} stores · ${mgrs.length} cluster manager(s) in ${esc(region)}</p></div>
+        <div><span class="field-label">Region</span>${adminAuth.unlocked
+          ? `<select id="regionSelect">${REGIONS.map(r=>`<option ${region===r?'selected':''}>${esc(r)}</option>`).join('')}</select>`
+          : `<div style="padding:8px 10px;font-weight:600;">${esc(region)}</div>`
+        }</div>
+      </div>
+      <div class="filters-grid" style="max-width:420px;">
+        <div><span class="field-label">From date</span><input type="date" id="rFDateFrom" value="${f.dateFrom||''}"></div>
+        <div><span class="field-label">To date</span><input type="date" id="rFDateTo" value="${f.dateTo||''}"></div>
+        <div style="align-self:end;"><button class="btn sm secondary" id="rFClearBtn">Clear dates</button></div>
+      </div>
+      <p class="locked-note" style="margin:10px 0 14px;">Leave both dates blank and click Fetch for the full all-time total. Nothing below loads until then.</p>
+      <button class="btn sm" id="regionalFetchDataBtn">Fetch Data</button>
+    `;
+  }
+
+  // Same date-range scoping as Cluster Review's Store Summary — applies to
+  // BOTH the Cluster Manager rollup and the store-level breakdown below.
+  const regionScope = txnsFor(t=>{
+    const store = storeByCode(t.storeCode);
+    if(store.region!==region) return false;
+    if(f.dateFrom && t.date<f.dateFrom) return false;
+    if(f.dateTo && t.date>f.dateTo) return false;
+    return true;
+  }).concat(regionalArchivedFetched.filter(t=>storeByCode(t.storeCode).region===region));
+  // Same scope as regionScope but including hidden ≤500 refunds — for the Below Threshold card only.
+  const regionScopeRaw = DATA.transactions.concat(regionalArchivedFetched).filter(t=>{
+    const store = storeByCode(t.storeCode);
+    if(store.region!==region) return false;
+    if(f.dateFrom && t.date<f.dateFrom) return false;
+    if(f.dateTo && t.date>f.dateTo) return false;
+    return true;
+  });
+
+  const rows = mgrs.map(m=>{
+    const mgrStores = stores.filter(s=>s.clusterManager===m);
+    const codes = mgrStores.map(s=>s.code);
+    const ts = regionScope.filter(t=>codes.includes(t.storeCode));
+    return clusterKpiRow(m, mgrStores, ts);
+  }).join('');
+
+  // Store-level breakdown, view/reporting only — Regional Manager gets no
+  // approve/sign-off controls here, same as the Cluster Manager Summary
+  // above it; only Store and Cluster roles can act on a transaction.
+  const storeRows = storeSummaryRows(stores, regionScope);
+
+  return `
+    <div class="session-bar"><span>Signed in for <b>${esc(region)}</b></span><a id="regionalLockBtn">Lock / switch region</a></div>
+    <div class="panel-head">
+      <div><h1>Regional Manager Insights</h1><p>${stores.length} stores · ${mgrs.length} cluster manager(s) in ${esc(region)}</p></div>
+      <div><span class="field-label">Region</span>${adminAuth.unlocked
+        ? `<select id="regionSelect">${REGIONS.map(r=>`<option ${region===r?'selected':''}>${esc(r)}</option>`).join('')}</select>`
+        : `<div style="padding:8px 10px;font-weight:600;">${esc(region)}</div>`
+      }</div>
+    </div>
+    <div class="filters-grid" style="max-width:420px;">
+      <div><span class="field-label">From date</span><input type="date" id="rFDateFrom" value="${f.dateFrom||''}"></div>
+      <div><span class="field-label">To date</span><input type="date" id="rFDateTo" value="${f.dateTo||''}"></div>
+      <div style="align-self:end;"><button class="btn sm secondary" id="rFClearBtn">Clear dates</button></div>
+    </div>
+    <div style="margin:4px 0 14px;">
+      <button class="btn sm" id="regionalFetchDataBtn">Refresh (apply dates)</button>
+      <button class="btn sm secondary" id="regionalHideDataBtn" style="margin-left:8px;">Hide / Reset</button>
+    </div>
+    <div class="locked-note" style="margin:4px 0 12px;">${(f.dateFrom||f.dateTo) ? `Showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}.` : 'Showing the full cumulative total across every day fetched.'}</div>
+    <div class="card">
+      <div class="card-head"><h2>Cluster Manager Summary — ${esc(region)}</h2></div>
+      <div class="card-body" style="overflow-x:auto;">
+        <table class="compact-table"><thead>${CLUSTER_TABLE_HEAD}</thead><tbody>${rows}</tbody></table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Store Summary — ${esc(region)}</h2><span class="count">Review only — no approvals or sign-offs here</span></div>
+      <div class="card-body" style="overflow-x:auto;">
+        <table class="compact-table"><thead>${STORE_SUMMARY_HEAD}</thead><tbody>${storeRows}</tbody></table>
+      </div>
+    </div>
+    ${renderReasonsCard(regionScope, region)}
+    ${renderMultiCriteriaCard(regionScope, region)}
+    ${renderBelowThresholdCard(regionScopeRaw, region)}
+  `;
+}
+
+/* =========================================================
+   HQ VIEW
+   ========================================================= */
+let hqDataFetched = false;
+// Signed Off / No Action Needed transactions for ALL stores, matching
+// whatever date range was set at fetch time — region filtering happens
+// client-side against this same set (same as it already does for the
+// always-loaded active transactions), so changing the region dropdown
+// doesn't require re-fetching.
+let hqArchivedFetched = [];
+
+function renderHQView(){
+  const f = getHqFilters();
+  const regionLocked = regionalAuth.unlocked && !adminAuth.unlocked;
+
+  if(!hqDataFetched){
+    return `
+      <div class="panel-head"><div><h1>HQ Dashboard</h1><p>${regionLocked ? `Consolidated compliance position for ${esc(f.region)}` : 'Consolidated organization-wide compliance position'}</p></div></div>
+      <div class="filters-grid" style="max-width:560px;">
+        <div><span class="field-label">From date</span><input type="date" id="fDateFrom" value="${f.dateFrom||''}"></div>
+        <div><span class="field-label">To date</span><input type="date" id="fDateTo" value="${f.dateTo||''}"></div>
+        <div><span class="field-label">Region</span>${regionLocked
+          ? `<div style="padding:8px 10px;font-weight:600;">${esc(f.region)}</div>`
+          : `<select id="fRegion"><option value="all">All regions</option>${REGIONS.map(r=>`<option ${f.region===r?'selected':''}>${esc(r)}</option>`).join('')}</select>`
+        }</div>
+        <div style="align-self:end;"><button class="btn sm secondary" id="fClearBtn">Clear dates</button></div>
+      </div>
+      <p class="locked-note" style="margin:10px 0 14px;">Leave both dates blank and click Fetch for the full all-time total. Nothing below loads until then, to keep the page fast to open.</p>
+      <button class="btn sm" id="hqFetchDataBtn">Fetch Data</button>
+    `;
+  }
+
+  const filtered = DATA.transactions.concat(hqArchivedFetched).filter(t=>{
+    if(isHiddenLowValueRefund(t)) return false;
+    const store = storeByCode(t.storeCode);
+    if(f.region!=='all' && store.region!==f.region) return false;
+    if(f.dateFrom && t.date<f.dateFrom) return false;
+    if(f.dateTo && t.date>f.dateTo) return false;
+    return true;
+  });
+  // Same scope as filtered but including hidden ≤500 refunds — for the Below Threshold card only.
+  const filteredRaw = DATA.transactions.concat(hqArchivedFetched).filter(t=>{
+    const store = storeByCode(t.storeCode);
+    if(f.region!=='all' && store.region!==f.region) return false;
+    if(f.dateFrom && t.date<f.dateFrom) return false;
+    if(f.dateTo && t.date>f.dateTo) return false;
+    return true;
+  });
+
+  const bucket = b => filtered.filter(t=>statusBucket(t.status)===b).length;
+  const catKpi = cat=>{
+    const ts = filtered.filter(t=>t.category===cat);
+    return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)};
+  };
+  const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice'), discounted=catKpi('discounted');
+  kpiDrilldown = {
+    total: filtered,
+    signedoff: filtered.filter(t=>statusBucket(t.status)==='Signed Off'),
+    notstarted: filtered.filter(t=>statusBucket(t.status)==='Not Started'),
+    openitems: filtered.filter(t=>statusBucket(t.status)==='Open Items'),
+    noactionneeded: filtered.filter(t=>t.status==='No Action Needed'),
+    refund: filtered.filter(t=>t.category==='refund'),
+    over30: filtered.filter(t=>t.category==='over30'),
+    fullprice: filtered.filter(t=>t.category==='fullprice'),
+    discounted: filtered.filter(t=>t.category==='discounted'),
+  };
+
+  const regionsInScope = f.region==='all' ? REGIONS : [f.region];
+  // Unassigned (closed-store placeholder) is not a real cluster manager and
+  // is excluded from the summary — it would otherwise show as a phantom row.
+  const mgrsInScope = [...new Set(STORES.filter(s=>regionsInScope.includes(s.region) && !s.closed).map(s=>s.clusterManager))].filter(m=>m!=='Unassigned');
+  const clusterRows = mgrsInScope.map(m=>{
+    const mgrStores = STORES.filter(s=>s.clusterManager===m && !s.closed);
+    const codes = mgrStores.map(s=>s.code);
+    const ts = filtered.filter(t=>codes.includes(t.storeCode));
+    return clusterKpiRow(m, mgrStores, ts);
+  }).join('');
+
+  return `
+    <div class="panel-head"><div><h1>HQ Dashboard</h1><p>${regionLocked ? `Consolidated compliance position for ${esc(f.region)}` : 'Consolidated organization-wide compliance position'}</p></div></div>
+
+    <div class="filters-grid" style="max-width:560px;">
+      <div><span class="field-label">From date</span><input type="date" id="fDateFrom" value="${f.dateFrom||''}"></div>
+      <div><span class="field-label">To date</span><input type="date" id="fDateTo" value="${f.dateTo||''}"></div>
+      <div><span class="field-label">Region</span>${regionLocked
+        ? `<div style="padding:8px 10px;font-weight:600;">${esc(f.region)}</div>`
+        : `<select id="fRegion"><option value="all">All regions</option>${REGIONS.map(r=>`<option ${f.region===r?'selected':''}>${esc(r)}</option>`).join('')}</select>`
+      }</div>
+      <div style="align-self:end;"><button class="btn sm secondary" id="fClearBtn">Clear dates</button></div>
+    </div>
+    <div style="margin:4px 0 14px;">
+      <button class="btn sm" id="hqFetchDataBtn">Refresh (apply dates)</button>
+      <button class="btn sm secondary" id="hqHideDataBtn" style="margin-left:8px;">Hide / Reset</button>
+    </div>
+    ${(f.dateFrom||f.dateTo) ? `<div class="locked-note" style="margin:4px 0 12px;">Showing ${f.dateFrom?fmtDate(f.dateFrom):'the beginning'} through ${f.dateTo?fmtDate(f.dateTo):'today'}. Leave both blank and refresh for the full cumulative total.</div>` : `<div class="locked-note" style="margin:4px 0 12px;">Showing the full cumulative total across every day fetched. Set a From/To date above and refresh to narrow it.</div>`}
+
+    <div class="grid kpi-status" style="grid-template-columns:repeat(5,1fr);">
+      <div class="kpi" data-kpi="total"><div class="num">${filtered.length}</div><div class="lbl">Total Transactions</div></div>
+      <div class="kpi status-done" data-kpi="signedoff"><div class="num num-green">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
+      <div class="kpi status-pending" data-kpi="notstarted"><div class="num num-red">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
+      <div class="kpi status-pending" data-kpi="openitems"><div class="num num-red">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
+    </div>
+    <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);">
+      <div class="kpi accent" data-kpi="refund"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
+      <div class="kpi accent" data-kpi="over30"><div class="num">${over30.count}</div><div class="lbl">Return &gt;30 Days Transactions · Qty ${over30.qty} · ${money(over30.amt)}</div></div>
+      <div class="kpi accent" data-kpi="fullprice"><div class="num">${fullprice.count}</div><div class="lbl">Full Price Sale Return Transactions · Qty (distinct) ${fullprice.count} · ${money(fullprice.amt)}</div></div>
+      <div class="kpi accent" data-kpi="discounted"><div class="num">${discounted.count}</div><div class="lbl">Discounted Sale Return Transactions · Qty ${discounted.qty} · ${money(discounted.amt)}</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Cluster Manager-wise Summary</h2></div>
+      <div class="card-body" style="overflow-x:auto;">
+        <table class="compact-table"><thead>${CLUSTER_TABLE_HEAD}</thead><tbody>${clusterRows}</tbody></table>
+      </div>
+    </div>
+    ${renderReasonsCard(filtered, regionLocked ? f.region : 'All Regions')}
+    ${renderMultiCriteriaCard(filtered, regionLocked ? f.region : 'All Regions')}
+    ${renderBelowThresholdCard(filteredRaw, regionLocked ? f.region : 'All Regions')}
+  `;
+}
+let hqFilters = {region:'all', dateFrom:'', dateTo:''};
+let clusterFilters = {dateFrom:'', dateTo:''};
+let regionalFilters = {dateFrom:'', dateTo:''};
+// Regional Manager gets the network-wide HQ layout but locked to their
+// OWN region — they can see their own cluster managers' rollup here (same
+// numbers as their dedicated Regional Insights tab), never another
+// region's. Only Admin gets the unrestricted 'all regions' + region
+// switcher. (Cluster Manager no longer reaches this screen at all — see
+// permittedTabs.)
+function getHqFilters(){
+  if(regionalAuth.unlocked && !adminAuth.unlocked){
+    return { region: regionalAuth.region, dateFrom: hqFilters.dateFrom, dateTo: hqFilters.dateTo };
+  }
+  return hqFilters;
+}
+
+/* =========================================================
+   ADMIN VIEW
+   ========================================================= */
+function renderAdminView(){
+  return `
+    <div class="session-bar"><span>Signed in as <b>Admin</b></span><a id="adminLockBtn">Lock / sign out</a></div>
+    <div class="panel-head"><div><h1>Admin Control Panel</h1><p>Report ingestion, backend connection status and audit trail</p></div></div>
+    <div class="toolbar">
+      <button class="btn ${adminSubView==='upload'?'':'secondary'} sm" id="adminTabUpload">Report Ingestion</button>
+      <button class="btn ${adminSubView==='audit'?'':'secondary'} sm" id="adminTabAudit">Audit Trail</button>
+    </div>
+    ${adminSubView==='audit' ? renderAuditTrailBody() : renderAdminUploadBody()}
+  `;
+}
+
+// Network-wide, all-time category totals — same numbers/definitions as
+// the HQ Dashboard's KPI row (refund/over30/fullprice counts, qty, value,
+// plus the three status buckets), but with no region/date scoping, since
+// Admin's job here is to see the complete picture regardless of filters
+// anyone else has set on their own screen.
+function renderCategorySummaryCard(txns, scopeLabel){
+  const visible = txns.filter(t=>!isHiddenLowValueRefund(t));
+  const bucket = b => visible.filter(t=>statusBucket(t.status)===b).length;
+  const catKpi = cat=>{
+    const ts = visible.filter(t=>t.category===cat);
+    return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)};
+  };
+  const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice'), discounted=catKpi('discounted');
+  kpiDrilldown = {
+    total: visible,
+    signedoff: visible.filter(t=>statusBucket(t.status)==='Signed Off'),
+    notstarted: visible.filter(t=>statusBucket(t.status)==='Not Started'),
+    openitems: visible.filter(t=>statusBucket(t.status)==='Open Items'),
+    noactionneeded: visible.filter(t=>t.status==='No Action Needed'),
+    refund: visible.filter(t=>t.category==='refund'),
+    over30: visible.filter(t=>t.category==='over30'),
+    fullprice: visible.filter(t=>t.category==='fullprice'),
+    discounted: visible.filter(t=>t.category==='discounted'),
+  };
+  return `
+    <div class="card">
+      <div class="card-head"><h2>Category-wise Summary</h2><span class="count">${esc(scopeLabel)}</span></div>
+      <div class="card-body">
+        <div class="grid kpi-status" style="grid-template-columns:repeat(5,1fr);">
+          <div class="kpi" data-kpi="total"><div class="num">${visible.length}</div><div class="lbl">Total Transactions</div></div>
+          <div class="kpi status-done" data-kpi="signedoff"><div class="num num-green">${bucket('Signed Off')}</div><div class="lbl">Signed Off</div></div>
+          <div class="kpi status-pending" data-kpi="notstarted"><div class="num num-red">${bucket('Not Started')}</div><div class="lbl">Not Started</div></div>
+          <div class="kpi status-pending" data-kpi="openitems"><div class="num num-red">${bucket('Open Items')}</div><div class="lbl">Open Items (Awaiting Review + Re-Review)</div></div>
+        </div>
+        <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);">
+          <div class="kpi accent" data-kpi="refund"><div class="num">${refund.count}</div><div class="lbl">Refund Transactions · Qty ${refund.qty} · ${money(refund.amt)}</div></div>
+          <div class="kpi accent" data-kpi="over30"><div class="num">${over30.count}</div><div class="lbl">Return &gt;30 Days Transactions · Qty ${over30.qty} · ${money(over30.amt)}</div></div>
+          <div class="kpi accent" data-kpi="fullprice"><div class="num">${fullprice.count}</div><div class="lbl">Full Price Sale Return Transactions · Qty ${fullprice.qty} · ${money(fullprice.amt)}</div></div>
+          <div class="kpi accent" data-kpi="discounted"><div class="num">${discounted.count}</div><div class="lbl">Discounted Sale Return Transactions · Qty ${discounted.qty} · ${money(discounted.amt)}</div></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderAdminUploadBody(){
+  const uploads = DATA.uploadLog.slice(0,15);
+  const uploadRows = uploads.length ? uploads.map(u=>{
+    const batchTxns = u.uploadId ? DATA.transactions.concat(adminArchivedFetched).filter(t=>t.uploadId===u.uploadId) : [];
+    // Only removable while EVERY transaction from this batch is still
+    // Not Submitted — once anything's been submitted/reviewed, deleting it
+    // would erase an audit trail. The backend enforces this too either way.
+    const canRemove = u.uploadId && batchTxns.length>0 && batchTxns.every(t=>t.status==='Not Submitted'||t.status==='No Action Needed');
+    const alreadyMoving = u.uploadId && batchTxns.length>0 && !canRemove;
+    return `
+    <tr>
+      <td>${fmtDateTime(u.timestamp)}</td>
+      <td>${esc(u.fileName)}</td>
+      <td class="num-cell">${u.total}</td>
+      <td class="num-cell">${u.imported}</td>
+      <td class="num-cell">${u.duplicate}</td>
+      <td class="num-cell">${u.rejected}</td>
+      <td>${u.status}</td>
+      <td>${canRemove ? `<button class="btn sm danger" data-removeupload="${u.uploadId}">Remove</button>`
+          : alreadyMoving ? `<button class="btn sm danger" data-forceremoveupload="${u.uploadId}" title="Overrides the submitted/reviewed protection — for test data only">Force Remove</button>`
+          : `<span class="locked-note">—</span>`}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="8" class="empty">No uploads yet.</td></tr>`;
+
+  return `
+    <div class="filters-grid" style="max-width:420px;">
+      <div><span class="field-label">From date</span><input type="date" id="aFDateFrom" value="${adminFilters.dateFrom||''}"></div>
+      <div><span class="field-label">To date</span><input type="date" id="aFDateTo" value="${adminFilters.dateTo||''}"></div>
+      <div style="align-self:end;"><button class="btn sm secondary" id="aFClearBtn">Clear dates</button></div>
+    </div>
+    <div style="margin:4px 0 14px;">
+      <button class="btn sm" id="adminFetchDataBtn">${adminDataFetched ? 'Refresh (apply dates)' : 'Fetch Archived Data'}</button>
+      ${adminDataFetched ? `<button class="btn sm secondary" id="adminHideDataBtn" style="margin-left:8px;">Hide / Reset</button>` : ''}
+    </div>
+    <p class="locked-note" style="margin:0 0 14px;">${adminDataFetched ? `Category Summary, Return Reasons, Multiple Criteria and Below Threshold below now include Signed Off / No Action Needed history matching your date range.` : `These four cards below currently reflect only active (Not Submitted / Awaiting Review / Re-Review) transactions — click Fetch to include full Signed Off / No Action Needed history.`}</p>
+    ${renderCategorySummaryCard(DATA.transactions.concat(adminArchivedFetched), 'All stores, all dates')}
+    ${renderReasonsCard(DATA.transactions.concat(adminArchivedFetched), 'All stores, all dates')}
+    ${renderMultiCriteriaCard(DATA.transactions.concat(adminArchivedFetched), 'All stores, all dates')}
+    ${renderBelowThresholdCard(DATA.transactions.concat(adminArchivedFetched), 'All stores, all dates')}
+    <div class="note-box">Live and backed by your Google Sheet via the Apps Script Web App — every save here writes to the DataStore tab, and every load reads from it. This is not a local-only prototype.</div>
+
+    <div class="grid" style="grid-template-columns:1fr 1fr;">
+      <div class="card">
+        <div class="card-head"><h2>Backend Connection</h2></div>
+        <div class="card-body">
+          <p><span class="status-dot dot-red"></span><b>Disconnected</b> — no Apps Script endpoint configured</p>
+          <p class="locked-note">Last successful sync: never · Last data refresh: never</p>
+          <button class="btn secondary sm" id="testConnBtn">Test Connection</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Storage Status</h2></div>
+        <div class="card-body">
+          <p><span class="status-dot dot-green"></span><b>Connected</b> — Claude persistent storage (shared)</p>
+          <p class="locked-note">Last report uploaded: ${DATA.lastUploadTs? fmtDateTime(DATA.lastUploadTs): 'never'}</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Sale Days</h2></div>
+      <div class="card-body">
+        <p class="locked-note" style="margin-bottom:10px;">Controls which category needs a store remark + cluster sign-off on any given date: Full Price during a window below, Discounted outside every window. Both are always shown in every KPI card regardless — this only changes which one is treated as the anomaly. Add the next sale here when it's announced; no code change or redeploy needed.</p>
+        <table class="compact-table" style="margin-bottom:12px;">
+          <thead><tr><th>Start</th><th>End</th><th>Note</th><th>Added By</th><th></th></tr></thead>
+          <tbody>${(DATA.saleWindows||[]).length ? DATA.saleWindows.map(w=>`
+            <tr>
+              <td>${fmtDate(w.start)}</td>
+              <td>${fmtDate(w.end)}</td>
+              <td>${esc(w.note||'—')}</td>
+              <td>${esc(w.addedBy||'—')}</td>
+              <td><button class="btn sm danger" data-deletesalewindow="${esc(w.id)}">Delete</button></td>
+            </tr>`).join('') : `<tr><td colspan="5" class="empty">No sale windows on file — every day is treated as a regular day (Discounted is the anomaly).</td></tr>`}
+          </tbody>
+        </table>
+        <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
+          <div><span class="field-label">Start date</span><input type="date" id="saleWindowStart"></div>
+          <div><span class="field-label">End date</span><input type="date" id="saleWindowEnd"></div>
+          <div><span class="field-label">Note (optional)</span><input type="text" id="saleWindowNote" placeholder="e.g. Winter Sale 2026" style="min-width:200px;"></div>
+          <button class="btn sm" id="addSaleWindowBtn">Add Sale Window</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Archive Old Transactions</h2></div>
+      <div class="card-body">
+        <p class="locked-note" style="margin-bottom:10px;">Physically moves Signed Off / No Action Needed transactions off the live sheet onto a separate Archive sheet — nothing is deleted, only relocated, and every transaction remains fully visible through "Fetch Archived Data" everywhere in the dashboard. This is what keeps the site fast to load as your history grows: the live sheet only has to hold what's currently active. Safe to run anytime, and safe to run repeatedly — processes up to 300 transactions per click, so a large backlog may need a few clicks.</p>
+        <button class="btn sm" id="archiveNowBtn">Archive Now</button>
+        <span id="archiveNowResult" style="margin-left:10px;font-size:13px;color:var(--ink-600);"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Upload Return Report</h2></div>
+      <div class="card-body">
+        <p class="locked-note" style="margin-bottom:10px;">Accepts the standard Return Report export (.xlsx) — header on row 7, one row per line-item. Store list, Region and Cluster Manager are already built in from Attributes_Store; you don't need to upload that sheet. Imported: Refund, Returns Over 30 Days, and — depending on the date — either Full Price Sale Return (during a Sale Days window) or Discounted Sale Return (outside one). Clean, on-time exchanges that don't match any of these are skipped and counted separately in the summary below.</p>
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+        <button class="btn sm" id="uploadBtn" style="margin-left:8px;">Upload &amp; Process</button>
+        <div id="uploadSummaryBox"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Upload Log</h2></div>
+      <div class="card-body" style="overflow-x:auto;">
+        <table><thead><tr><th>Timestamp</th><th>File</th><th>Total</th><th>Imported</th><th>Duplicate</th><th>Rejected</th><th>Status</th><th>Action</th></tr></thead>
+        <tbody>${uploadRows}</tbody></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Reset a Transaction</h2></div>
+      <div class="card-body">
+        <p class="locked-note" style="margin-bottom:8px;">For clearing test data only — this wipes Store Approval, Store/Cluster Remarks, Reason, review history, and sets Status back to Not Submitted for ONE transaction. The transaction row itself stays; only actions taken on it are cleared. Every reset is logged in the Audit Trail. To find a transaction, enter its Transaction No. (e.g. from the report) or the internal ID (e.g. T00042).</p>
+        <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
+          <div><span class="field-label">Transaction No. or ID</span><input type="text" id="resetTxnInput" placeholder="e.g. 100234567 or T00042" style="min-width:220px;"></div>
+          <button class="btn sm danger" id="resetTxnBtn">Find &amp; Reset</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Fix Status Mismatch</h2></div>
+      <div class="card-body">
+        <p class="locked-note" style="margin-bottom:8px;">For a transaction whose Status doesn't match its own latest review round — e.g. the review history shows "Signed Off" but Status still says Awaiting Review. Sets Status to match the latest round only; remarks, reason, and every review round are left exactly as they are. Logged in the Audit Trail.</p>
+        <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
+          <div><span class="field-label">Transaction No. or ID</span><input type="text" id="reconcileTxnInput" placeholder="e.g. 100234567 or T00042" style="min-width:220px;"></div>
+          <button class="btn sm secondary" id="reconcileTxnBtn">Find &amp; Fix Status</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/* =========================================================
+   AUDIT TRAIL (folded into Admin — no longer a main nav tab)
+   ========================================================= */
+function renderAuditTrailBody(){
+  const rows = DATA.auditLog.slice(0,300).map(a=>`
+    <tr>
+      <td>${fmtDateTime(a.timestamp)}</td>
+      <td>${esc(a.user)}</td>
+      <td>${esc(a.role)}</td>
+      <td>${esc(a.action)}</td>
+      <td class="mono">${esc(a.transaction||'—')}</td>
+      <td>${esc(a.prevStatus||'—')} → ${esc(a.newStatus||'—')}</td>
+      <td>${esc(a.remarks||'')}</td>
+    </tr>`).join('') || `<tr><td colspan="7" class="empty">No audit entries yet.</td></tr>`;
+  return `
+    <div class="card">
+      <div class="card-head"><h2>Audit Trail</h2><span class="count">Immutable log of submissions, reviews, re-reviews, sign-offs and uploads</span></div>
+      <div class="card-body" style="overflow-x:auto;">
+        <table><thead><tr><th>Timestamp</th><th>User</th><th>Role</th><th>Action</th><th>Transaction</th><th>Status Change</th><th>Remarks</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+      </div>
+    </div>
+  `;
+}
+
+/* =========================================================
+   EVENT HANDLERS
+   ========================================================= */
+function bindDynamicHandlers(){
+  document.querySelectorAll('[data-kpi]').forEach(el=>{
+    el.onclick = ()=>openKpiModal(el.dataset.kpi);
+  });
+  document.querySelectorAll('[data-showcat]').forEach(el=>{
+    el.onclick = ()=>{
+      openStoreCategory = openStoreCategory===el.dataset.showcat ? null : el.dataset.showcat;
+      render();
+    };
+  });
+  document.querySelectorAll('[data-showclustercat]').forEach(el=>{
+    el.onclick = ()=>{
+      openClusterCategory = openClusterCategory===el.dataset.showclustercat ? null : el.dataset.showclustercat;
+      render();
+    };
+  });
+  const clusterFetchKpiBtn = document.getElementById('clusterFetchKpiBtn');
+  if(clusterFetchKpiBtn) clusterFetchKpiBtn.onclick = async ()=>{
+    const dateFrom = document.getElementById('cFDateFrom') ? document.getElementById('cFDateFrom').value : clusterFilters.dateFrom;
+    const dateTo = document.getElementById('cFDateTo') ? document.getElementById('cFDateTo').value : clusterFilters.dateTo;
+    clusterFilters = { dateFrom, dateTo };
+    const stores = STORES.filter(s=>s.clusterManager===clusterAuth.clusterManager && !s.closed);
+    const codes = stores.map(s=>s.code);
+    clusterFetchKpiBtn.disabled = true; clusterFetchKpiBtn.textContent = 'Fetching...';
+    const archived = await fetchArchivedTransactions(dateFrom, dateTo, codes);
+    clusterFetchKpiBtn.disabled = false; clusterFetchKpiBtn.textContent = 'Refresh (apply dates)';
+    if(archived) clusterArchivedFetched = archived;
+    clusterKpiVisible = true;
+    render();
+  };
+  const clusterHideKpiBtn = document.getElementById('clusterHideKpiBtn');
+  if(clusterHideKpiBtn) clusterHideKpiBtn.onclick = ()=>{ clusterKpiVisible = false; clusterArchivedFetched = []; openClusterCategory = null; render(); };
+  const hqFetchDataBtn = document.getElementById('hqFetchDataBtn');
+  if(hqFetchDataBtn) hqFetchDataBtn.onclick = async ()=>{
+    const dateFrom = document.getElementById('fDateFrom') ? document.getElementById('fDateFrom').value : hqFilters.dateFrom;
+    const dateTo = document.getElementById('fDateTo') ? document.getElementById('fDateTo').value : hqFilters.dateTo;
+    const fRegionEl = document.getElementById('fRegion');
+    hqFilters = { dateFrom, dateTo, region: fRegionEl ? fRegionEl.value : hqFilters.region };
+    hqFetchDataBtn.disabled = true; hqFetchDataBtn.textContent = 'Fetching...';
+    // No storeCodes filter — HQ can show any region, so this always fetches
+    // every store's archived history for the date range and filters by
+    // region client-side, same as the always-loaded active transactions
+    // already do; avoids re-fetching every time the region dropdown changes.
+    const archived = await fetchArchivedTransactions(dateFrom, dateTo, null);
+    hqFetchDataBtn.disabled = false; hqFetchDataBtn.textContent = 'Refresh (apply dates)';
+    if(archived) hqArchivedFetched = archived;
+    hqDataFetched = true;
+    render();
+  };
+  const hqHideDataBtn = document.getElementById('hqHideDataBtn');
+  if(hqHideDataBtn) hqHideDataBtn.onclick = ()=>{ hqDataFetched = false; hqArchivedFetched = []; render(); };
+  const regionalFetchDataBtn = document.getElementById('regionalFetchDataBtn');
+  if(regionalFetchDataBtn) regionalFetchDataBtn.onclick = async ()=>{
+    const dateFrom = document.getElementById('rFDateFrom') ? document.getElementById('rFDateFrom').value : regionalFilters.dateFrom;
+    const dateTo = document.getElementById('rFDateTo') ? document.getElementById('rFDateTo').value : regionalFilters.dateTo;
+    regionalFilters = { dateFrom, dateTo };
+    const codes = STORES.filter(s=>s.region===ctx.region && !s.closed).map(s=>s.code);
+    regionalFetchDataBtn.disabled = true; regionalFetchDataBtn.textContent = 'Fetching...';
+    const archived = await fetchArchivedTransactions(dateFrom, dateTo, codes);
+    regionalFetchDataBtn.disabled = false; regionalFetchDataBtn.textContent = 'Refresh (apply dates)';
+    if(archived) regionalArchivedFetched = archived;
+    regionalDataFetched = true;
+    render();
+  };
+  const regionalHideDataBtn = document.getElementById('regionalHideDataBtn');
+  if(regionalHideDataBtn) regionalHideDataBtn.onclick = ()=>{ regionalDataFetched = false; regionalArchivedFetched = []; render(); };
+  ['aFDateFrom','aFDateTo'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.onchange = ()=>{
+      adminFilters = { dateFrom: document.getElementById('aFDateFrom').value, dateTo: document.getElementById('aFDateTo').value };
+    };
+  });
+  const aFClearBtn = document.getElementById('aFClearBtn');
+  if(aFClearBtn) aFClearBtn.onclick = ()=>{ adminFilters = {dateFrom:'', dateTo:''}; render(); };
+  const adminFetchDataBtn = document.getElementById('adminFetchDataBtn');
+  if(adminFetchDataBtn) adminFetchDataBtn.onclick = async ()=>{
+    const dateFrom = document.getElementById('aFDateFrom') ? document.getElementById('aFDateFrom').value : adminFilters.dateFrom;
+    const dateTo = document.getElementById('aFDateTo') ? document.getElementById('aFDateTo').value : adminFilters.dateTo;
+    adminFilters = { dateFrom, dateTo };
+    adminFetchDataBtn.disabled = true; adminFetchDataBtn.textContent = 'Fetching...';
+    const archived = await fetchArchivedTransactions(dateFrom, dateTo, null);
+    adminFetchDataBtn.disabled = false; adminFetchDataBtn.textContent = 'Refresh (apply dates)';
+    if(archived) adminArchivedFetched = archived;
+    adminDataFetched = true;
+    render();
+  };
+  const adminHideDataBtn = document.getElementById('adminHideDataBtn');
+  if(adminHideDataBtn) adminHideDataBtn.onclick = ()=>{ adminDataFetched = false; adminArchivedFetched = []; render(); };
+  // Store: approval checkbox — updates the submit button's enabled state
+  // live, WITHOUT a full re-render, so any remarks being typed in other
+  // rows are never wiped out by the checkbox click.
+  document.querySelectorAll('[data-approve]').forEach(el=>{
+    el.onchange = ()=>{
+      const t = DATA.transactions.find(x=>x.id===el.dataset.approve);
+      t.storeApproval = el.value==='yes';
+      persistQuiet(t);
+      updateSubmitButtonState();
+    };
+  });
+  document.querySelectorAll('[data-submitone]').forEach(el=>{
+    el.onclick = ()=>submitSingleTxn(el.dataset.submitone);
+  });
+  // Store: remarks (draft) / respond (re-review). Saved to the in-memory
+  // model on every keystroke (not just on blur) so remarks are never lost
+  // to a stray re-render or an auto-refresh landing mid-edit; written to
+  // persistent storage on blur to avoid excessive writes.
+  document.querySelectorAll('[data-remark], [data-respond]').forEach(el=>{
+    el.addEventListener('focus', ()=>editingActive=true);
+    el.addEventListener('input', ()=>{
+      const id = el.dataset.remark || el.dataset.respond;
+      const t = DATA.transactions.find(x=>x.id===id);
+      if(t) t.storeRemarks = el.value;
+    });
+    el.addEventListener('blur', ()=>{
+      editingActive=false;
+      const id = el.dataset.remark || el.dataset.respond;
+      const t = DATA.transactions.find(x=>x.id===id);
+      t.storeRemarks = el.value;
+      persistQuiet(t);
+    });
+  });
+  // Reason for Return dropdown + its "Other" free-text follow-up.
+  document.querySelectorAll('[data-reason]').forEach(el=>{
+    el.onchange = ()=>{
+      const t = DATA.transactions.find(x=>x.id===el.dataset.reason);
+      if(t){ t.reason = el.value; persistQuiet(t); }
+      render(); // re-render so the "Other" textarea appears/disappears immediately
+    };
+  });
+  document.querySelectorAll('[data-reasonremarks]').forEach(el=>{
+    el.addEventListener('focus', ()=>editingActive=true);
+    el.addEventListener('input', ()=>{
+      const t = DATA.transactions.find(x=>x.id===el.dataset.reasonremarks);
+      if(t) t.reasonRemarks = el.value;
+    });
+    el.addEventListener('blur', ()=>{
+      editingActive=false;
+      const t = DATA.transactions.find(x=>x.id===el.dataset.reasonremarks);
+      if(t){ t.reasonRemarks = el.value; persistQuiet(t); }
+    });
+  });
+  document.querySelectorAll('[data-clusterremark]').forEach(el=>{
+    el.addEventListener('focus', ()=>editingActive=true);
+    el.addEventListener('blur', ()=>{
+      editingActive=false;
+      const t = DATA.transactions.find(x=>x.id===el.dataset.clusterremark);
+      t.clusterRemarks = el.value;
+      persistQuiet(t);
+    });
+  });
+
+  // Submit all approved drafts
+  const submitAllBtn = document.getElementById('submitAllBtn');
+  if(submitAllBtn) submitAllBtn.onclick = ()=>{
+    if(submitAllBtn.disabled) return;
+    submitStoreDrafts(storeAuth.storeCode);
+  };
+
+  // Resubmit after re-review
+  document.querySelectorAll('[data-resubmit]').forEach(b=>{
+    b.onclick = ()=>resubmitTxn(b.dataset.resubmit);
+  });
+
+  // Cluster manager actions
+  document.querySelectorAll('[data-signoff]').forEach(b=>{
+    b.onclick = ()=>signOffTxn(b.dataset.signoff);
+  });
+  document.querySelectorAll('[data-rereview]').forEach(b=>{
+    b.onclick = ()=>sendReReview(b.dataset.rereview);
+  });
+
+  // HQ filters
+  ['fDateFrom','fDateTo','fRegion'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.onchange = ()=>{
+      const fRegionEl = document.getElementById('fRegion');
+      hqFilters = {
+        dateFrom: document.getElementById('fDateFrom').value,
+        dateTo: document.getElementById('fDateTo').value,
+        // No #fRegion element when the region is locked (Regional Manager,
+        // non-admin) — keep whatever region is already in force instead of
+        // reading a field that doesn't exist on screen.
+        region: fRegionEl ? fRegionEl.value : hqFilters.region
+      };
+      render();
+    };
+  });
+  const fClearBtn = document.getElementById('fClearBtn');
+  if(fClearBtn) fClearBtn.onclick = ()=>{
+    hqFilters = { dateFrom:'', dateTo:'', region: hqFilters.region };
+    render();
+  };
+
+  // Cluster Review filters
+  ['cFDateFrom','cFDateTo'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.onchange = ()=>{
+      clusterFilters = {
+        dateFrom: document.getElementById('cFDateFrom').value,
+        dateTo: document.getElementById('cFDateTo').value
+      };
+      render();
+    };
+  });
+  const cFClearBtn = document.getElementById('cFClearBtn');
+  if(cFClearBtn) cFClearBtn.onclick = ()=>{ clusterFilters = {dateFrom:'', dateTo:''}; render(); };
+
+  // Regional Manager Insights filters
+  ['rFDateFrom','rFDateTo'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.onchange = ()=>{
+      regionalFilters = {
+        dateFrom: document.getElementById('rFDateFrom').value,
+        dateTo: document.getElementById('rFDateTo').value
+      };
+      render();
+    };
+  });
+  const rFClearBtn = document.getElementById('rFClearBtn');
+  if(rFClearBtn) rFClearBtn.onclick = ()=>{ regionalFilters = {dateFrom:'', dateTo:''}; render(); };
+
+  // Regional Manager Insights — region selector
+  const regionSel = document.getElementById('regionSelect');
+  if(regionSel) regionSel.onchange = (e)=>{ ctx.region = e.target.value; regionalDataFetched = false; regionalArchivedFetched = []; render(); };
+
+  // Store/cluster/regional switchers used ONLY by Admin browsing between
+  // views post-login — not login gates anymore, just view selectors.
+  const adminStoreSwitch = document.getElementById('adminStoreSwitch');
+  if(adminStoreSwitch) adminStoreSwitch.onchange = ()=>{ storeAuth.storeCode = adminStoreSwitch.value; render(); };
+  const adminClusterSwitch = document.getElementById('adminClusterSwitch');
+  if(adminClusterSwitch) adminClusterSwitch.onchange = ()=>{ clusterAuth.clusterManager = adminClusterSwitch.value; clusterKpiVisible = false; clusterArchivedFetched = []; openClusterCategory = null; render(); };
+
+  // Per-view "Lock" buttons and the header Log out button all do the same
+  // thing now: clear every auth state and drop back to the single
+  // password gate. (Under the old per-role login system these only
+  // needed to clear their own role; now that one password grants exactly
+  // one role, "lock" and "log out" are the same action everywhere.)
+  ['storeLockBtn','clusterLockBtn','regionalLockBtn','adminLockBtn','logoutBtn'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.onclick = logout;
+  });
+
+  // Single password gate
+  const gateUnlockBtn = document.getElementById('gateUnlockBtn');
+  const gatePassInput = document.getElementById('gatePass');
+  if(gateUnlockBtn){
+    gateUnlockBtn.onclick = async ()=>{
+      const pass = gatePassInput.value;
+      if(!pass){ showToast('Enter your access code.'); return; }
+      gateUnlockBtn.disabled = true; gateUnlockBtn.textContent = 'Checking...';
+      const { matches, wrongPassword } = await verifyPasswordLogin(pass);
+      if(!matches){
+        gateUnlockBtn.disabled = false; gateUnlockBtn.textContent = 'Unlock';
+        // Only say "incorrect" when the backend actually said so cleanly.
+        // Anything else (network blip, cold start, server error) gets its
+        // own accurate message from verifyPasswordLogin itself — telling
+        // someone their CORRECT password is "incorrect" just because the
+        // server hiccuped wastes their time re-typing something that was
+        // never wrong in the first place.
+        if(wrongPassword) showToast('Incorrect access code.');
+        return;
+      }
+      // Unlock EVERY role this password matched — a dual-role person
+      // (e.g. Regional Manager who is also Cluster Manager of their own
+      // cluster) gets both sets of rights, not just one. permittedTabs()
+      // below unions whatever's unlocked, so both tabs show up together.
+      matches.forEach(match=>{
+        if(match.role === 'admin'){
+          adminAuth.unlocked = true;
+        } else if(match.role === 'regional'){
+          regionalAuth.unlocked = true; regionalAuth.region = match.identifier; ctx.region = match.identifier;
+        } else if(match.role === 'cluster'){
+          clusterAuth.unlocked = true; clusterAuth.clusterManager = match.identifier;
+        } else if(match.role === 'store'){
+          storeAuth.unlocked = true; storeAuth.storeCode = match.identifier;
+        }
+      });
+      // Landing screen: pick the broadest role's home tab. Every other
+      // unlocked role's tab is still reachable from the nav bar — this
+      // only decides what's showing the moment you log in.
+      screen = adminAuth.unlocked ? 'hq' : regionalAuth.unlocked ? 'hq' : clusterAuth.unlocked ? 'cluster' : storeAuth.unlocked ? 'store' : 'hq';
+      // Re-fetch fresh data at the MOMENT of login, not just once at page
+      // open. The page's very first load (init(), before anyone logs in)
+      // can silently land on the empty offline fallback if the backend was
+      // slow to wake up — the login screen looks completely normal either
+      // way, since it doesn't depend on DATA at all, so a real, correct
+      // login could previously go straight through to an empty dashboard
+      // with no visible reason why. This makes a successful login always
+      // double-check it actually has real data before showing anything.
+      gateUnlockBtn.textContent = 'Loading your data...';
+      const fresh = await fetchDataFromBackend();
+      if(fresh){ DATA = fresh; dataIsLive = true; }
+      gateUnlockBtn.disabled = false; gateUnlockBtn.textContent = 'Unlock';
+      render();
+    };
+  }
+  if(gatePassInput) gatePassInput.onkeydown = (e)=>{ if(e.key==='Enter') gateUnlockBtn.click(); };
+
+  const manualRefreshBtn = document.getElementById('manualRefreshBtn');
+  if(manualRefreshBtn) manualRefreshBtn.onclick = async ()=>{
+    manualRefreshBtn.disabled = true; manualRefreshBtn.textContent = 'Refreshing...';
+    const fresh = await fetchDataFromBackend();
+    manualRefreshBtn.disabled = false; manualRefreshBtn.textContent = '↻ Refresh';
+    if(fresh){
+      DATA = fresh;
+      lastLoadedTs = new Date().toISOString();
+      nextRefreshIn = REFRESH_INTERVAL_SECONDS; // manual refresh also resets the auto-refresh countdown
+      render();
+      showToast('Refreshed.');
+    } else {
+      showToast('Refresh failed — still showing the last successfully loaded data.', 6000);
+    }
+  };
+
+  const adminTabUpload = document.getElementById('adminTabUpload');
+  if(adminTabUpload) adminTabUpload.onclick = ()=>{ adminSubView='upload'; render(); };
+  const adminTabAudit = document.getElementById('adminTabAudit');
+  if(adminTabAudit) adminTabAudit.onclick = ()=>{ adminSubView='audit'; render(); };
+
+  const testBtn = document.getElementById('testConnBtn');
+  if(testBtn) testBtn.onclick = ()=>showToast('No backend configured — this prototype runs entirely on local persistent storage, not a live Apps Script endpoint.', 4500);
+  const uploadBtn = document.getElementById('uploadBtn');
+  if(uploadBtn) uploadBtn.onclick = handleUpload;
+  document.querySelectorAll('[data-removeupload]').forEach(b=>{
+    b.onclick = ()=>removeUpload(b.dataset.removeupload);
+  });
+  document.querySelectorAll('[data-forceremoveupload]').forEach(b=>{
+    b.onclick = ()=>forceRemoveUpload(b.dataset.forceremoveupload);
+  });
+  const addSaleWindowBtn = document.getElementById('addSaleWindowBtn');
+  if(addSaleWindowBtn) addSaleWindowBtn.onclick = ()=>{
+    const start = document.getElementById('saleWindowStart').value;
+    const end = document.getElementById('saleWindowEnd').value;
+    const note = document.getElementById('saleWindowNote').value;
+    addSaleWindowRemote(start, end, note);
+  };
+  document.querySelectorAll('[data-deletesalewindow]').forEach(b=>{
+    b.onclick = ()=>deleteSaleWindowRemote(b.dataset.deletesalewindow);
+  });
+  const archiveNowBtn = document.getElementById('archiveNowBtn');
+  if(archiveNowBtn) archiveNowBtn.onclick = archiveNow;
+  document.querySelectorAll('[data-reason-toggle]').forEach(el=>{
+    el.onclick = ()=>{
+      const panel = document.getElementById('otherRemarksTable');
+      if(panel) panel.style.display = panel.style.display==='none' ? 'block' : 'none';
+    };
+  });
+  const resetTxnBtn = document.getElementById('resetTxnBtn');
+  const resetTxnInput = document.getElementById('resetTxnInput');
+  if(resetTxnBtn) resetTxnBtn.onclick = ()=>resetTransactionByAdmin(resetTxnInput.value);
+  if(resetTxnInput) resetTxnInput.onkeydown = (e)=>{ if(e.key==='Enter') resetTxnBtn.click(); };
+  const reconcileTxnBtn = document.getElementById('reconcileTxnBtn');
+  const reconcileTxnInput = document.getElementById('reconcileTxnInput');
+  if(reconcileTxnBtn) reconcileTxnBtn.onclick = ()=>reconcileTxnStatus(reconcileTxnInput.value);
+  if(reconcileTxnInput) reconcileTxnInput.onkeydown = (e)=>{ if(e.key==='Enter') reconcileTxnBtn.click(); };
+}
+
+async function persistQuiet(t){ await patchTransactions([t], []); }
+
+// Re-syncs the Submit button's disabled state / label directly in the DOM
+// (no render()) so it reacts instantly to checkbox changes without touching
+// any remarks textarea a manager may still be typing into.
+function updateSubmitButtonState(){
+  const container = document.getElementById('submitControls');
+  if(!container) return;
+  const store = storeByCode(storeAuth.storeCode);
+  const mine = txnsFor(t=>t.storeCode===store.code);
+  const approvedDraftCount = mine.filter(t=>t.status==='Not Submitted' && t.storeApproval).length;
+  container.innerHTML = renderSubmitControlsInner(approvedDraftCount);
+  const btn = document.getElementById('submitAllBtn');
+  if(btn) btn.onclick = ()=>{ if(!btn.disabled) submitStoreDrafts(storeAuth.storeCode); };
+}
+
+// Only transactions ticked "Is Approved by Manager" move forward — an
+// unapproved draft stays at the store for further action instead of being
+// silently pushed into Cluster Review.
+async function submitStoreDrafts(storeCode){  const drafts = DATA.transactions.filter(t=>t.storeCode===storeCode && t.status==='Not Submitted' && t.storeApproval);
+  if(!drafts.length){ showToast('No approved draft transactions to submit.'); return; }
+  const missingReason = drafts.filter(t=>!t.reason || (t.reason==='Other' && !t.reasonRemarks.trim()));
+  if(missingReason.length){
+    showToast(`${missingReason.length} approved transaction(s) are missing a Reason for Return (or remarks for "Other") — select one before submitting.`, 6000);
+    return;
+  }
+  const today = new Date().toISOString();
+  const auditEntries = [];
+  // Snapshot before mutating so a failed save can be rolled back exactly —
+  // without this, a save that fails server-side left the LOCAL screen
+  // saying "submitted" while the Sheet still had it at Not Submitted, so
+  // it silently reappeared as pending on the next reload with no warning
+  // anything had gone wrong.
+  const snapshots = drafts.map(t=>({t, submittedDate:t.submittedDate, lastUpdated:t.lastUpdated, lastUpdatedBy:t.lastUpdatedBy}));
+  drafts.forEach(t=>{
+    t.status='Awaiting Review';
+    t.submittedDate = t.date;
+    t.lastUpdated = today;
+    t.lastUpdatedBy = 'Store Manager';
+    auditEntries.push(addAudit({user:'Store Manager', role:'Store', action:'Store Submitted', transaction:t.transactionNumber, prevStatus:'Not Submitted', newStatus:'Awaiting Review', remarks:t.storeRemarks}));
+  });
+  const ok = await patchTransactions(drafts, auditEntries);
+  if(!ok){
+    snapshots.forEach(s=>{ s.t.status='Not Submitted'; s.t.submittedDate=s.submittedDate; s.t.lastUpdated=s.lastUpdated; s.t.lastUpdatedBy=s.lastUpdatedBy; });
+    render();
+    return; // postAction already showed the actual error — no misleading success toast
+  }
+  showToast(`${drafts.length} approved transaction(s) submitted and locked for Cluster Review.`);
+  render();
+}
+
+// Submits ONE transaction immediately, without touching any other draft —
+// same validation as the bulk Submit button (must be marked Yes, must
+// have a Reason selected, and remarks if that reason is "Other").
+async function submitSingleTxn(id){
+  const t = DATA.transactions.find(x=>x.id===id);
+  if(!t || t.status!=='Not Submitted') return;
+  if(!t.storeApproval){ showToast('Set "Is Approved by Manager" to Yes before submitting.', 4000); return; }
+  if(!t.reason || (t.reason==='Other' && !t.reasonRemarks.trim())){
+    showToast('Select a Reason for Return (and remarks for "Other") before submitting.', 4000);
+    return;
+  }
+  const prevSubmittedDate = t.submittedDate, prevLastUpdated = t.lastUpdated, prevLastUpdatedBy = t.lastUpdatedBy;
+  t.status='Awaiting Review';
+  t.submittedDate = t.date;
+  t.lastUpdated = new Date().toISOString();
+  t.lastUpdatedBy = 'Store Manager';
+  const auditEntry = addAudit({user:'Store Manager', role:'Store', action:'Store Submitted', transaction:t.transactionNumber, prevStatus:'Not Submitted', newStatus:'Awaiting Review', remarks:t.storeRemarks});
+  const ok = await patchTransactions([t], [auditEntry]);
+  if(!ok){
+    t.status='Not Submitted'; t.submittedDate=prevSubmittedDate; t.lastUpdated=prevLastUpdated; t.lastUpdatedBy=prevLastUpdatedBy;
+    render();
+    return;
+  }
+  showToast(`${t.transactionNumber} submitted and locked for Cluster Review.`);
+  render();
+}
+
+async function resubmitTxn(id){
+  const t = DATA.transactions.find(x=>x.id===id);
+  if(!t || t.status!=='Re-Review') return;
+  const prevLastUpdated = t.lastUpdated, prevLastUpdatedBy = t.lastUpdatedBy;
+  t.status='Awaiting Review';
+  t.lastUpdated=new Date().toISOString();
+  t.lastUpdatedBy='Store Manager';
+  const auditEntry = addAudit({user:'Store Manager', role:'Store', action:'Store Resubmitted', transaction:t.transactionNumber, prevStatus:'Re-Review', newStatus:'Awaiting Review', remarks:t.storeRemarks});
+  const ok = await patchTransactions([t], [auditEntry]);
+  if(!ok){
+    t.status='Re-Review'; t.lastUpdated=prevLastUpdated; t.lastUpdatedBy=prevLastUpdatedBy;
+    render();
+    return;
+  }
+  showToast('Transaction resubmitted and locked again.');
+  render();
+}
+
+async function signOffTxn(id){
+  const t = DATA.transactions.find(x=>x.id===id);
+  if(!t) return;
+  const prev = t.status;
+  const prevReviewHistory = (t.reviewHistory||[]).slice();
+  const prevReviewedDate = t.reviewedDate, prevLastUpdated = t.lastUpdated, prevLastUpdatedBy = t.lastUpdatedBy;
+  t.reviewHistory = t.reviewHistory || [];
+  const reviewEntry = { round: t.reviewHistory.length+1, decision:'Signed Off', remarks:t.clusterRemarks, by:clusterAuth.clusterManager, date:new Date().toISOString() };
+  t.reviewHistory.push(reviewEntry);
+  t.status='Signed Off';
+  t.reviewedDate = new Date().toISOString().slice(0,10);
+  t.lastUpdated = new Date().toISOString();
+  t.lastUpdatedBy = clusterAuth.clusterManager;
+  const auditEntry = addAudit({user:clusterAuth.clusterManager, role:'Cluster Manager', action:'Cluster Manager Signed Off (round '+t.reviewHistory.length+')', transaction:t.transactionNumber, prevStatus:prev, newStatus:'Signed Off', remarks:t.clusterRemarks});
+  const ok = await saveReviewDecision(t, reviewEntry, auditEntry);
+  if(!ok){
+    // Roll back exactly — this is the fix for "signed-off transactions
+    // still showing in the queue": the save was failing silently, the
+    // screen said "signed off" and removed it from the queue anyway, and
+    // it only reappeared on the NEXT reload once the real (unsaved)
+    // status came back from the Sheet — by which point the success
+    // message had already told the Cluster Manager it was done.
+    t.status = prev; t.reviewHistory = prevReviewHistory; t.reviewedDate = prevReviewedDate;
+    t.lastUpdated = prevLastUpdated; t.lastUpdatedBy = prevLastUpdatedBy;
+    render();
+    return;
+  }
+  showToast('Transaction signed off and closed.');
+  render();
+}
+
+async function sendReReview(id){
+  const t = DATA.transactions.find(x=>x.id===id);
+  if(!t) return;
+  if(!t.clusterRemarks || !t.clusterRemarks.trim()){
+    showToast('Cluster Manager remarks are required before sending for re-review.', 4000);
+    return;
+  }
+  const prev = t.status;
+  const prevReviewHistory = (t.reviewHistory||[]).slice();
+  const prevLastUpdated = t.lastUpdated, prevLastUpdatedBy = t.lastUpdatedBy;
+  t.reviewHistory = t.reviewHistory || [];
+  const reviewEntry = { round: t.reviewHistory.length+1, decision:'Re-Review', remarks:t.clusterRemarks, by:clusterAuth.clusterManager, date:new Date().toISOString() };
+  t.reviewHistory.push(reviewEntry);
+  t.status='Re-Review';
+  t.lastUpdated = new Date().toISOString();
+  t.lastUpdatedBy = clusterAuth.clusterManager;
+  const auditEntry = addAudit({user:clusterAuth.clusterManager, role:'Cluster Manager', action:'Cluster Manager Sent for Re-Review (round '+t.reviewHistory.length+')', transaction:t.transactionNumber, prevStatus:prev, newStatus:'Re-Review', remarks:t.clusterRemarks});
+  const ok = await saveReviewDecision(t, reviewEntry, auditEntry);
+  if(!ok){
+    t.status = prev; t.reviewHistory = prevReviewHistory; t.lastUpdated = prevLastUpdated; t.lastUpdatedBy = prevLastUpdatedBy;
+    render();
+    return;
+  }
+  showToast('Sent back to store for re-review.');
+  render();
+}
+
+// Cluster Review / Cluster Manager Review 2 cell — round 1 is "Cluster Review",
+// round 2 (only present if round 1 was Re-Review and store resubmitted) is
+// "Cluster Manager Review 2".
+function reviewRoundCell(t, round){
+  const entry = (t.reviewHistory||[])[round-1];
+  if(!entry) return '<span class="locked-note">—</span>';
+  const cls = entry.decision==='Signed Off' ? 'st-signed' : 'st-rereview';
+  return `<span class="badge ${cls}">${esc(entry.decision)}</span>
+    <div class="remark-locked" style="margin-top:5px;">${esc(entry.remarks)||'—'}</div>
+    <div class="locked-note" style="margin-top:3px;">${esc(entry.by||'')} · ${entry.date?fmtDateTime(entry.date):''}</div>`;
+}
+
+/* =========================================================
+   UPLOAD / IMPORT — real Return Report format
+   ---------------------------------------------------------
+   This parses the row-level Return/Exchange/Refund export directly
+   (one row per line-item, heavy per-transaction duplication),
+   collapses rows to distinct transactions, and classifies each into
+   Over 30 Days / Refund / Full Price Sale Return using the same base
+   logic as the retail-returns-compliance skill's analyze_returns.py
+   (Credit Memo is no longer tracked as its own bucket — a transaction
+   settled via credit memo now falls under Full Price Sale Return if
+   any line was returned at full price, otherwise it is skipped as a
+   clean exchange, same as any other non-flagged return).
+
+   COLUMN LAYOUT: this matches the skill's documented column
+   contract (SKILL.md / analyze_returns.py COL_* constants) — no
+   "Time" column. An earlier version of this file carried a +1
+   offset from RETURN_RECEIPT onward to match a report export that
+   had a stray Time column after Return Date; that column has since
+   been removed from the source report, so the offset is removed
+   here too. If a future export reintroduces a Time (or any other)
+   column, EXPECTED_HEADERS below will catch it — the strict column
+   check aborts the import with a clear mismatch message rather than
+   silently misaligning data.
+
+   Refund, Over 30 Days, and one of Full Price Sale Return / Discounted
+   Sale Return (whichever is the anomaly for that transaction's date —
+   see SALE_WINDOWS) are imported. A clean, on-time exchange that
+   matches none of these is not a compliance item and is intentionally
+   skipped — the upload summary reports how many were skipped this way
+   so nothing silently disappears.
+   ========================================================= */
+const SRC_HEADER_ROW_1BASED = 7; // documented header row; verified by content, not just position
+const EXPECTED_HEADERS = [
+  'Store Name','Store','Date','Receipt','Sales Order','Transaction','Sales Group','Sales Group Name',
+  'Receipt','Transaction','Sales Order','Date','Store','Store Name','Phone Number',
+  'Item','Barcode','Quantity','Unit Price','Total Amount',
+  'Item','Barcode','Price','Quantity','Total Amount',
+  'Transaction Type','Payment Method Name'
+];
+const COL = {
+  STORE_NAME:0, STORE_CODE:1, RETURN_DATE:2, RETURN_RECEIPT:3, SALES_ORDER:4, TRANSACTION:5,
+  SALES_GROUP:6, SALES_GROUP_NAME:7, ORIG_RECEIPT:8, ORIG_TRANSACTION:9, ORIG_SALES_ORDER:10, ORIG_DATE:11,
+  ORIG_STORE:12, ORIG_STORE_NAME:13, PHONE:14, SOLD_ITEM:15, SOLD_BARCODE:16, SOLD_QTY:17, SOLD_UNIT_PRICE:18,
+  SOLD_TOTAL:19, RETURN_ITEM:20, RETURN_BARCODE:21, RETURN_PRICE:22, RETURN_QTY:23, RETURN_TOTAL:24,
+  TXN_TYPE:25, PAYMENT_METHOD:26,
+  TRANSACTION_TIME:27, // column AB — new. Read positionally, not header-name
+                       // checked, since the exact label you give it in the
+                       // report isn't fixed yet; whatever's in AB is used.
+};
+
+function normText(v){ return String(v==null?'':v).trim().toLowerCase(); }
+function numOf(v){ const n = Number(v); return isNaN(n) ? 0 : n; }
+// Excel's date epoch is Dec 30, 1899 (this already accounts for the
+// well-known spreadsheet bug that treats 1900 as a leap year). Converting
+// via this arithmetic — instead of a library's Date-object conversion —
+// never touches a timezone-aware API, so it can't land on the wrong
+// calendar day depending on what timezone the browser is running in. This
+// is the fix for a real bug: the previous Date-object-based conversion
+// produced a 2-day-backward shift for transactions confirmed correct at
+// the source (verified directly against a real uploaded report).
+function excelSerialToUTCDate(serial){
+  const days = Math.floor(Number(serial));
+  if(!isFinite(days)) return null;
+  const utcMs = (days - 25569) * 86400000; // 25569 = days between 1899-12-30 and 1970-01-01
+  const d = new Date(utcMs);
+  return isNaN(d.getTime()) ? null : d;
+}
+function toDateOnly(v){
+  if(typeof v === 'number' && isFinite(v)){
+    const d = excelSerialToUTCDate(v);
+    return d ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())) : null;
+  }
+  if(v instanceof Date && !isNaN(v.getTime())){
+    // Fallback only — UTC getters, never local ones, since local getters
+    // combined with a later UTC-based serialization is exactly what
+    // caused the original bug.
+    return new Date(Date.UTC(v.getUTCFullYear(), v.getUTCMonth(), v.getUTCDate()));
+  }
+  if(typeof v === 'string' && v.trim()){
+    const d = new Date(v);
+    if(!isNaN(d.getTime())) return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  }
+  return null;
+}
+// Transaction Time (column AB) can arrive as a raw Excel serial (integer
+// part = date, fractional part = time-of-day — only the fraction is used
+// here), a JS Date (fallback), or plain text like "14:35".
+function toTimeString(v){
+  if(typeof v === 'number' && isFinite(v) && v>=0){
+    const frac = v - Math.floor(v);
+    if(frac<=0) return '';
+    const totalMin = Math.round(frac*24*60);
+    return String(Math.floor(totalMin/60)).padStart(2,'0')+':'+String(totalMin%60).padStart(2,'0');
+  }
+  if(v instanceof Date && !isNaN(v.getTime())){
+    return String(v.getUTCHours()).padStart(2,'0')+':'+String(v.getUTCMinutes()).padStart(2,'0');
+  }
+  if(typeof v === 'string' && v.trim()) return v.trim();
+  return '';
+}
+function isoDate(d){
+  if(!d) return null;
+  // Built directly from UTC getters, never toISOString() on a value that
+  // might carry local-timezone construction — that mismatch was the other
+  // half of the original 2-day-shift bug.
+  return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'-'+String(d.getUTCDate()).padStart(2,'0');
+}
+
+// Find the header row by content (search near the documented row first,
+// then scan) rather than trusting the row number alone.
+function findHeaderRowIndex(aoa){
+  const candidates = [SRC_HEADER_ROW_1BASED-1, ...Array.from({length:15},(_,i)=>i)];
+  for(const idx of candidates){
+    const row = aoa[idx];
+    if(!row) continue;
+    const norm = row.map(normText);
+    if(norm.includes('transaction type') && norm.includes('payment method name')) return idx;
+  }
+  return -1;
+}
+
+function handleUpload(){
+  const input = document.getElementById('fileInput');
+  const file = input.files[0];
+  if(!file){ showToast('Choose a file first.'); return; }
+  const reader = new FileReader();
+  const uploadBatchId = 'U'+Date.now(); // tags every transaction from this
+    // one upload so a bad/duplicate upload can be removed later without
+    // touching transactions from any other upload.
+  reader.onload = async (e)=>{
+    try{
+      // cellDates is deliberately NOT used — letting SheetJS convert Excel
+      // date serials into JS Date objects turned out to be silently
+      // timezone-dependent (verified: the exact same cell produced a
+      // different underlying instant depending on the browser's local
+      // timezone), which combined with a later UTC round-trip to produce a
+      // real 2-day-backward date shift. Reading raw serial numbers instead
+      // and converting them with pure arithmetic (see excelSerialToUTCDate)
+      // sidesteps timezone handling entirely — it can't be timezone-wrong
+      // because it never touches a timezone-aware API.
+      const wb = XLSX.read(e.target.result, {type:'array'});
+      const sheetName = wb.SheetNames.find(n=>!/attribut/i.test(n)) || wb.SheetNames[0];
+      const sheet = wb.Sheets[sheetName];
+      const aoa = XLSX.utils.sheet_to_json(sheet, {header:1, defval:'', raw:true});
+      if(!aoa.length){ showToast('File has no rows.'); return; }
+
+      const headerIdx = findHeaderRowIndex(aoa);
+      if(headerIdx===-1){
+        showToast(`Could not find the report header row (expected "Transaction Type" and "Payment Method Name" columns). Import aborted — this file doesn't look like a Return Report export.`, 6000);
+        return;
+      }
+      const actualHeaders = aoa[headerIdx].map(h=>String(h||'').trim());
+      const mismatches = EXPECTED_HEADERS.map((exp,i)=>({i, exp, got:actualHeaders[i]||''}))
+        .filter(m=>normText(m.exp)!==normText(m.got));
+      if(mismatches.length){
+        const detail = mismatches.slice(0,6).map(m=>`col ${m.i+1}: expected "${m.exp}", found "${m.got||'(blank)'}"`).join(' · ');
+        showToast(`Report column layout doesn't match what this dashboard expects — import aborted rather than risk wrong numbers. ${detail}`, 9000);
+        document.getElementById('uploadSummaryBox').innerHTML = `<div class="warn-box" style="margin-top:12px;"><b>Column mismatch — nothing imported.</b><br>${detail}${mismatches.length>6?` · +${mismatches.length-6} more`:''}<br>Check the file layout against the Recognized Format note above before re-uploading.</div>`;
+        return;
+      }
+
+      const dataRows = aoa.slice(headerIdx+1).filter(r=>r.some(c=>String(c||'').trim()!==''));
+      if(!dataRows.length){ showToast('Header row found but no data rows beneath it.'); return; }
+
+      // Group raw rows into distinct transactions.
+      const PRICE_MATCH_TOLERANCE = 0.5; // rupees — absorbs rounding, not real discounts
+      const groups = new Map();
+      let skippedNoKey = 0;
+      dataRows.forEach(row=>{
+        const key = String(row[COL.TRANSACTION]||'').trim();
+        if(!key){ skippedNoKey++; return; }
+        if(!groups.has(key)){
+          groups.set(key, {
+            key,
+            storeCode: String(row[COL.STORE_CODE]||'').trim(),
+            returnDate: toDateOnly(row[COL.RETURN_DATE]),
+            txnTime: toTimeString(row[COL.TRANSACTION_TIME]),
+            origTransaction: '', origDate: null, paymentMethod: '', txnType: '',
+            returnQty: 0, returnTotal: 0, soldTotal: 0, itemCount: 0,
+            fullPriceItemCount: 0, discountedItemCount: 0, discountValue: 0,
+            fullPriceValue: 0, discountedValue: 0, barcodes: [],
+          });
+        }
+        const g = groups.get(key);
+        g.returnQty += numOf(row[COL.RETURN_QTY]);
+        g.returnTotal += numOf(row[COL.RETURN_TOTAL]);
+        g.soldTotal += numOf(row[COL.SOLD_TOTAL]);
+        if(String(row[COL.RETURN_BARCODE]||'').trim()){
+          g.itemCount++;
+          // Full-price check for this line item: Return Price (listed unit
+          // price on the return line) x Return Qty is the value the item
+          // would carry at full price. Compare against the line's actual
+          // Return Total Amount — if they match, the item was returned at
+          // full price; if not, the sale (and so the return) was on discount.
+          const rowQty = numOf(row[COL.RETURN_QTY]);
+          const rowPrice = numOf(row[COL.RETURN_PRICE]);
+          const rowActual = numOf(row[COL.RETURN_TOTAL]);
+          const rowFullPriceValue = rowPrice * rowQty;
+          const isFullPriceLine = Math.abs(rowFullPriceValue - rowActual) <= PRICE_MATCH_TOLERANCE;
+          if(isFullPriceLine){
+            g.fullPriceItemCount++;
+            g.fullPriceValue += rowActual;
+          } else {
+            g.discountedItemCount++;
+            g.discountValue += (rowFullPriceValue - rowActual);
+            // Actual returned value of the discounted line(s) — mirrors
+            // fullPriceValue above. This, not discountValue (which is just
+            // the discount's SIZE), is what the 'discounted' compliance
+            // category reports, symmetric to how 'fullprice' reports
+            // fullPriceValue rather than some other derived figure.
+            g.discountedValue += rowActual;
+          }
+          const rowBarcode = String(row[COL.RETURN_BARCODE]).trim();
+          const existingBarcode = g.barcodes.find(b=>b.barcode===rowBarcode);
+          if(existingBarcode){ existingBarcode.qty += rowQty; existingBarcode.amount += rowActual; }
+          else { g.barcodes.push({ barcode: rowBarcode, qty: rowQty, amount: rowActual, fullPrice: isFullPriceLine }); }
+        }
+        if(!g.origTransaction && row[COL.ORIG_TRANSACTION]) g.origTransaction = String(row[COL.ORIG_TRANSACTION]).trim();
+        if(!g.origDate && row[COL.ORIG_DATE]){ const d=toDateOnly(row[COL.ORIG_DATE]); if(d) g.origDate=d; }
+        if(!g.paymentMethod && row[COL.PAYMENT_METHOD]) g.paymentMethod = String(row[COL.PAYMENT_METHOD]).trim();
+        if(!g.txnType && row[COL.TXN_TYPE]) g.txnType = String(row[COL.TXN_TYPE]).trim();
+      });
+
+      let imported=0, duplicate=0, unknownStore=0, notFlagged=0, missingReturnDate=0;
+      // Key = store + transaction. Covers loaded rows only; the server
+      // (Code.gs) is the real gate and also checks Signed Off / No Action
+      // Needed / archived rows that the browser never loads.
+      const existingKeys = new Set(DATA.transactions.concat(adminArchivedFetched)
+        .map(t=>(t.storeCode+'|'+t.transactionNumber).toUpperCase()));
+      let seq = 1;
+
+      groups.forEach(g=>{
+        const store = resolveStore(g.storeCode);
+        if(!store){ unknownStore++; return; }
+        const dupKey = (store.code+'|'+g.key).toUpperCase();
+        if(existingKeys.has(dupKey)){ duplicate++; return; }
+
+        const isOnlineCN = /^cn/i.test(g.origTransaction||'');
+        let agingDays = null, isOver30 = false;
+        if(g.origDate && !isOnlineCN && g.returnDate){
+          agingDays = Math.round((g.returnDate - g.origDate) / 86400000);
+          isOver30 = agingDays > 30;
+        }
+        // Credit Memo is no longer its own compliance bucket, but the
+        // settlement-method check is kept as a guard so a transaction settled
+        // via Credit Memo is never mis-typed as a cash/bank Refund purely
+        // because of a remaining-balance mismatch.
+        const isCreditMemo = normText(g.paymentMethod) === 'credit memo';
+        const remainingBalance = g.returnTotal - Math.abs(g.soldTotal);
+        const isRefund = !isCreditMemo && (normText(g.txnType)==='refund' || remainingBalance>0);
+        // Credit Memo settlements are explicitly excluded from the Full Price
+        // Sale Return table — a credit-note issuance is not the same
+        // compliance event as a full-price cash/exchange return, and mixing
+        // them was flagged as a reporting error.
+        const isFullPriceReturn = g.fullPriceItemCount > 0 && !isCreditMemo;
+        const isDiscountedReturn = g.discountedItemCount > 0 && !isCreditMemo;
+        const returnIsoDate = isoDate(g.returnDate);
+        const inSaleWindow = g.returnDate ? isInSaleWindow(returnIsoDate) : false;
+
+        // Both Full Price and Discounted are ALWAYS categorized and shown
+        // in every KPI/summary card, on every day — visibility doesn't
+        // turn off just because it isn't the anomaly today. What changes
+        // with the sale window is only whether the transaction NEEDS a
+        // store remark + cluster sign-off:
+        //   Sale Days: Full Price is the anomaly (review required),
+        //              Discounted is expected (view-only).
+        //   Regular days: Discounted is the anomaly (review required),
+        //                 Full Price is expected (view-only).
+        // Full Price takes priority when a transaction has BOTH kinds of
+        // lines (priceType 'Mixed') — same precedence as before this
+        // dual-visibility change.
+        let category = null;
+        if(isOver30) category = 'over30';
+        else if(isRefund) category = 'refund';
+        else if(isFullPriceReturn) category = 'fullprice';
+        else if(isDiscountedReturn) category = 'discounted';
+        if(!category){ notFlagged++; return; }
+        const needsReview = category==='over30' || category==='refund'
+          || (category==='fullprice' && inSaleWindow)
+          || (category==='discounted' && !inSaleWindow);
+
+        // Every signal this transaction ACTUALLY exhibits, checked without
+        // the Credit Memo exclusion or the priority chain above — this is
+        // deliberately broader than `category`. A transaction that's both
+        // late AND full-price only ever gets 'over30' as its one category
+        // (Over 30 wins the priority chain), but it belongs in the
+        // multi-criteria risk view precisely because it's more than one
+        // thing at once. matchedCriteria.length is always >=1 whenever a
+        // category was assigned; >=2 is the actual overlap worth flagging.
+        // Full Price / Discounted only count as a RISK signal when they're
+        // actually the anomaly for this date — same condition as
+        // needsReview above. On a regular day, having full-price lines is
+        // normal, not a risk; flagging it here would tell a store manager
+        // "this is elevated risk" for something that isn't, which is worse
+        // than not flagging it at all. Over 30 / Credit Memo / Refund carry
+        // no such date dependency, so they're unconditional.
+        const matchedLabels = [];
+        if(isOver30) matchedLabels.push('Over 30 Days');
+        if(isCreditMemo) matchedLabels.push('Credit Memo');
+        if(normText(g.txnType)==='refund' || remainingBalance>0) matchedLabels.push('Refund');
+        if(g.fullPriceItemCount>0 && inSaleWindow) matchedLabels.push('Full Price Sale Return');
+        if(g.discountedItemCount>0 && !inSaleWindow) matchedLabels.push('Discounted Return');
+        const matchedCriteria = matchedLabels.join(', ');
+
+        existingKeys.add(dupKey);
+        // Compliance "amount" is metric-specific, matching the skill's Store
+        // Summary: Over 30 Days reports raw Return Value (the full amount at
+        // risk from a late return). Refund reports Remaining Balance (Return
+        // Value - Sold Value) — the money actually leaked to the customer.
+        // Full Price Sale Return reports the value of the full-price line(s)
+        // actually returned. Discounted Sale Return mirrors that exactly,
+        // reporting the value of the discounted line(s) actually returned —
+        // NOT the discount amount itself (g.discountValue is a different,
+        // smaller number: how much was knocked off, not what came back).
+        const complianceAmount = category === 'over30' ? g.returnTotal
+          : category === 'refund' ? remainingBalance
+          : category === 'discounted' ? g.discountedValue
+          : g.fullPriceValue;
+        let priceType = 'N/A';
+        if(g.fullPriceItemCount>0 && g.discountedItemCount===0) priceType = 'Full Price';
+        else if(g.discountedItemCount>0 && g.fullPriceItemCount===0) priceType = 'Discounted';
+        else if(g.fullPriceItemCount>0 && g.discountedItemCount>0) priceType = 'Mixed';
+        // The report's own Return Date column decides which day a transaction
+        // is filed under everywhere in this dashboard — NOT the date it was
+        // uploaded/imported. If that column can't be parsed for a given
+        // transaction, it is rejected rather than silently defaulted to
+        // today's date, since a silent default would misfile it under the
+        // wrong day in every date-range filter.
+        if(!g.returnDate){ missingReturnDate++; return; }
+        DATA.transactions.push(baseTxn({
+          id: 'T'+uploadBatchId.slice(1)+'-'+String(seq++).padStart(4,'0'), // unique per upload; can never collide with archived/deleted rows
+          category,
+          storeCode: store.code,
+          transactionNumber: g.key,
+          itemCount: g.itemCount,
+          qty: g.returnQty,
+          amount: complianceAmount,
+          paymentMethod: g.paymentMethod,
+          date: isoDate(g.returnDate),
+          time: g.txnTime || '',
+          agingDays,
+          priceType,
+          discountValue: g.discountValue,
+          barcodes: g.barcodes,
+          origTransaction: g.origTransaction,
+          matchedCriteria,
+          status: needsReview ? 'Not Submitted' : 'No Action Needed',
+          uploadId: uploadBatchId,
+        }));
+        imported++;
+      });
+
+      const logEntry = {
+        timestamp:new Date().toISOString(), fileName:file.name,
+        total: groups.size, imported, duplicate,
+        rejected: unknownStore + notFlagged + missingReturnDate,
+        status: imported>0?'Processed':'No records imported',
+        uploadId: uploadBatchId,
+      };
+      DATA.uploadLog.unshift(logEntry);
+      DATA.lastUploadTs = logEntry.timestamp;
+      const auditEntry = addAudit({user:'Admin', role:'Admin', action:`Admin Uploaded Return Report (${file.name})`, transaction:'—', prevStatus:'—', newStatus:'—', remarks:`${imported} imported, ${duplicate} duplicate, ${unknownStore} unknown store, ${notFlagged} not flagged (clean exchange), ${missingReturnDate} unparseable return date, ${skippedNoKey} rows with no Transaction key`});
+      // Only THIS batch's brand-new rows go to the backend — every other
+      // transaction already on the sheet (submitted, under review, signed
+      // off by someone else right now) is left completely untouched.
+      const newTxns = DATA.transactions.filter(t=>t.uploadId===uploadBatchId);
+      const upRes = await saveUploadJson(newTxns, logEntry, auditEntry);
+      if(!upRes || !upRes.ok){
+        // Save failed: take the rows back out so the screen matches the sheet.
+        DATA.transactions = DATA.transactions.filter(t=>t.uploadId!==uploadBatchId);
+        DATA.uploadLog = DATA.uploadLog.filter(u=>u.uploadId!==uploadBatchId);
+        showToast('Upload could not be saved. Nothing was imported. Please contact the administrator.', 8000);
+        render();
+        return;
+      }
+      const serverSkipped = upRes.serverSkippedDuplicates || 0;
+      // Reload from the sheet so the screen shows exactly what was stored.
+      const freshAfterUpload = await fetchDataFromBackend();
+      if(freshAfterUpload) DATA = freshAfterUpload;
+
+      document.getElementById('uploadSummaryBox').innerHTML = `
+        <div class="note-box" style="margin-top:12px;">
+          <b>Upload Summary</b> — Distinct transactions: ${groups.size} · Imported: ${imported - serverSkipped} · Duplicate (already in system): ${duplicate + serverSkipped} · Unknown store code: ${unknownStore} · Not flagged / clean exchange (skipped, not a compliance item): ${notFlagged}${missingReturnDate?` · <b>Unparseable Return Date (skipped — fix and re-upload): ${missingReturnDate}</b>`:''}${skippedNoKey?` · Rows with no Transaction key: ${skippedNoKey}`:''}
+        </div>`;
+      showToast(`Import complete: ${imported - serverSkipped} new transaction(s) added${serverSkipped?`, ${serverSkipped} already on the sheet and skipped`:''}.`);
+      render();
+    }catch(err){
+      showToast('Could not read file: '+(err.message||err), 5000);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function resolveStore(raw){
+  const s = String(raw||'').trim().toLowerCase();
+  if(!s) return null;
+  return STORES.find(st=>st.code.toLowerCase()===s || st.name.toLowerCase()===s) || null;
+}
+
+/* =========================================================
+   AUTO REFRESH (safe: skips while a field is being edited)
+   ========================================================= */
+setInterval(async ()=>{
+  nextRefreshIn--;
+  if(nextRefreshIn<=0){
+    nextRefreshIn=REFRESH_INTERVAL_SECONDS;
+    if(!editingActive){
+      // A failed refresh keeps showing the last successfully loaded DATA
+      // instead of wiping the screen — a transient network blip must never
+      // look like the data was deleted.
+      const fresh = await fetchDataFromBackend();
+      if(fresh){
+        DATA = fresh;
+        lastLoadedTs = new Date().toISOString();
+        render();
+      } else {
+        showToast('Auto-refresh failed — still showing the last successfully loaded data.', 6000);
+      }
+      return;
+    }
+  }
+  renderClock();
+}, 1000);
+
+/* =========================================================
+   INIT
+   ========================================================= */
+(async function init(){
+  DATA = await loadData();
+  lastLoadedTs = new Date().toISOString();
+  render();
+})();
+</script>
+</body>
+</html>
