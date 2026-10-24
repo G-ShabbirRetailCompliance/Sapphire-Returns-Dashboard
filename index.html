@@ -351,6 +351,10 @@ function baseTxn(t){
     // only place that second signal survives. Comma-joined string, not an
     // array, since it round-trips through a single Sheet cell.
     matchedCriteria: t.matchedCriteria || '',
+    // Per-category values for overlap counting (see categoryValueFor). null = not recorded.
+    refundValue: t.refundValue == null ? null : t.refundValue,
+    fullPriceValue: t.fullPriceValue == null ? null : t.fullPriceValue,
+    discountedValue: t.discountedValue == null ? null : t.discountedValue,
     uploadId: t.uploadId || null, // which Admin upload batch this came from — used to remove a bad/duplicate upload without touching anything else
     storeApproval: submitted ? true : false,
     storeRemarks: submitted ? t.storeRemarks || '' : '',
@@ -376,11 +380,6 @@ function baseTxn(t){
 /* =========================================================
    STATE
    ========================================================= */
-// Same normalisation as Code.gs txnKey_(): keep the two in step.
-function normKeyPart(v){
-  return String(v==null?'':v).replace(/[\u00A0\u200B-\u200D\uFEFF]/g,' ').replace(/\s+/g,' ').trim().toUpperCase();
-}
-function txnKey(storeCode, txnNo){ return normKeyPart(storeCode)+'|'+normKeyPart(txnNo); }
 let DATA = { transactions: [], auditLog: [], uploadLog: [], saleWindows: [], lastUploadTs: null };
 // False whenever DATA is the offline empty-seed fallback rather than a
 // real response from the backend — drives a visible banner in render()
@@ -405,11 +404,12 @@ const KPI_LABELS = {
 };
 function openKpiModal(key){
   const txns = kpiDrilldown[key] || [];
-  renderTxnListInModal(`${KPI_LABELS[key]||key} — ${txns.length} transaction(s)`, txns);
+  const catKey = ['refund','over30','fullprice','discounted'].indexOf(key)!==-1 ? key : null;
+  renderTxnListInModal(`${KPI_LABELS[key]||key} — ${txns.length} transaction(s)`, txns, catKey);
   document.getElementById('txnListModal').style.display = 'flex';
 }
 let currentModalTxns = [];
-function renderTxnListInModal(title, txns){
+function renderTxnListInModal(title, txns, catKey){
   document.getElementById('txnListModalTitle').textContent = title;
   currentModalTxns = txns; // for CSV export — see exportModalCsv
   const rows = txns.slice().sort((a,b)=>a.date<b.date?1:-1).map(t=>`
@@ -418,28 +418,29 @@ function renderTxnListInModal(title, txns){
       <td>${esc(t.storeCode)}</td>
       <td>${fmtDate(t.date)}</td>
       <td>${esc(CATEGORY_LABEL[t.category]||t.category)}</td>
-      <td class="num-cell">${money(t.amount)}</td>
+      <td class="num-cell">${money(catKey ? categoryValueFor(t,catKey) : t.amount)}</td>
+      ${catKey ? `<td>${t.category===catKey ? 'Primary' : 'Also counted here <span class="locked-note">(primary: '+esc(CATEGORY_LABEL[t.category]||t.category)+')</span>'}</td>` : ''}
       <td>${badge(t.status)}</td>
       <td><button class="btn sm secondary" data-viewtxndetail="${t.id}">View</button></td>
-    </tr>`).join('') || `<tr><td colspan="7" class="empty">No transactions in this bucket.</td></tr>`;
+    </tr>`).join('') || `<tr><td colspan="8" class="empty">No transactions in this bucket.</td></tr>`;
   document.getElementById('txnListModalBody').innerHTML =
     `<div style="margin-bottom:10px;"><button class="btn sm secondary" id="exportModalCsvBtn">Export CSV</button></div>
-     <table class="compact-table"><thead><tr><th>Transaction No.</th><th>Store</th><th>Date</th><th>Category</th><th>Value</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+     <table class="compact-table"><thead><tr><th>Transaction No.</th><th>Store</th><th>Date</th><th>Category</th><th>${catKey ? 'Value in this category' : 'Value'}</th>${catKey ? '<th>Counted as</th>' : ''}<th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
   document.querySelectorAll('[data-viewtxndetail]').forEach(b=>{
-    b.onclick = ()=>openTxnDetailInModal(b.dataset.viewtxndetail, title, txns);
+    b.onclick = ()=>openTxnDetailInModal(b.dataset.viewtxndetail, title, txns, catKey);
   });
   const exportBtn = document.getElementById('exportModalCsvBtn');
-  if(exportBtn) exportBtn.onclick = ()=>exportTxnsCsv(title, currentModalTxns);
+  if(exportBtn) exportBtn.onclick = ()=>exportTxnsCsv(title, currentModalTxns, catKey);
 }
 // Plain client-side CSV — no library needed for a flat transaction list.
 // Quotes every field and doubles internal quotes per RFC 4180 so a
 // remark containing a comma or a quote doesn't corrupt the file.
-function exportTxnsCsv(title, txns){
-  const cols = ['Transaction No.','Store','Date','Category','Qty','Value','Status','Reason','Reason Remarks','Store Remarks'];
+function exportTxnsCsv(title, txns, catKey){
+  const cols = ['Transaction No.','Store','Date','Category','Qty','Value','Status','Reason','Reason Remarks','Store Remarks'].concat(catKey ? ['Value in this category','Counted as'] : []);
   const csvEscape = v => '"' + String(v==null?'':v).replace(/"/g,'""') + '"';
   const lines = [cols.map(csvEscape).join(',')];
   txns.forEach(t=>{
-    lines.push([t.transactionNumber, t.storeCode, t.date, CATEGORY_LABEL[t.category]||t.category, t.qty, t.amount, t.status, t.reason||'', t.reasonRemarks||'', t.storeRemarks||''].map(csvEscape).join(','));
+    lines.push([t.transactionNumber, t.storeCode, t.date, CATEGORY_LABEL[t.category]||t.category, t.qty, t.amount, t.status, t.reason||'', t.reasonRemarks||'', t.storeRemarks||''].concat(catKey ? [categoryValueFor(t,catKey), t.category===catKey ? 'Primary' : 'Also counted here'] : []).map(csvEscape).join(','));
   });
   const blob = new Blob([lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
@@ -456,8 +457,11 @@ function exportTxnsCsv(title, txns){
 // transaction carrying that weight on every page load whether anyone
 // looks at it or not. backLabel/backTxns let the modal return to
 // whatever list it was opened from.
-async function openTxnDetailInModal(id, backLabel, backTxns){
-  const t = DATA.transactions.find(x=>x.id===id);
+async function openTxnDetailInModal(id, backLabel, backTxns, backCat){
+  // Look in the list the modal was opened from FIRST — archived transactions
+  // live in the fetched-archive arrays, not DATA.transactions, so looking only
+  // there made View do nothing for every archived row.
+  const t = (backTxns||[]).find(x=>x.id===id) || DATA.transactions.find(x=>x.id===id);
   if(!t) return;
   document.getElementById('txnListModalTitle').textContent = `${t.transactionNumber} — ${esc(t.storeCode)}`;
   document.getElementById('txnListModalBody').innerHTML = `<p class="locked-note">Loading line-item detail…</p>`;
@@ -495,7 +499,7 @@ async function openTxnDetailInModal(id, backLabel, backTxns){
     <table class="compact-table"><thead><tr><th>Round</th><th>Decision</th><th>By</th><th>Date</th><th>Remarks</th></tr></thead><tbody>${reviewRows}</tbody></table>
   `;
   const backBtn = document.getElementById('txnDetailBackBtn');
-  if(backBtn) backBtn.onclick = ()=>renderTxnListInModal(backLabel, backTxns);
+  if(backBtn) backBtn.onclick = ()=>renderTxnListInModal(backLabel, backTxns, backCat);
 }
 function closeKpiModal(){ document.getElementById('txnListModal').style.display = 'none'; }
 (function(){
@@ -981,8 +985,41 @@ function badge(status){
 // HQ Dashboard. This is the single place that rule lives; txnsFor() and
 // the HQ view's own filter both route through it, so there's nowhere
 // left that shows these except a direct read of the raw Sheet data.
+const LOW_VALUE_REFUND_MAX = 500;
 function isHiddenLowValueRefund(t){
-  return t.category==='refund' && t.amount<=500;
+  return t.category==='refund' && t.amount<=LOW_VALUE_REFUND_MAX;
+}
+
+// ---- Overlapping KPI categories -------------------------------------
+// `category` is a single priority-ordered PICK (Over 30 > Refund > Full
+// Price > Discounted) and still drives the ACTION screens — Store Entry
+// and the Cluster Review Queue — so a transaction is only ever approved
+// or signed off once, from one place. The KPI/summary counts are
+// different: a transaction that is Over 30 days AND a refund is counted
+// under BOTH, with each category's own value.
+// Returns the value this transaction contributes to `cat`, or null if it
+// doesn't count there.
+//  - Its own assigned category always counts, with the stored amount
+//    (exactly the pre-change behaviour).
+//  - Beyond that, only rows imported after the per-category value
+//    columns existed can overlap: older rows have null values, so they
+//    keep counting only under their assigned category.
+//  - Credit Memo settlements never count as Refund/Full Price/Discounted.
+//  - A Refund reached only via overlap follows the same Rs 500 rule as
+//    any other refund: at or below it, it is not counted.
+function categoryValueFor(t, cat){
+  if(t.category===cat) return t.amount;
+  const matched = (t.matchedCriteria||'').split(', ').filter(Boolean);
+  if(!matched.length || matched.indexOf('Credit Memo')!==-1) return null;
+  if(cat==='refund' && matched.indexOf('Refund')!==-1 && t.refundValue!=null && t.refundValue>LOW_VALUE_REFUND_MAX) return t.refundValue;
+  if(cat==='fullprice' && matched.indexOf('Full Price Sale Return')!==-1 && t.fullPriceValue!=null) return t.fullPriceValue;
+  if(cat==='discounted' && matched.indexOf('Discounted Return')!==-1 && t.discountedValue!=null) return t.discountedValue;
+  return null;
+}
+function inCategory(txns, cat){ return txns.filter(t=>categoryValueFor(t,cat)!==null); }
+function catStats(txns, cat){
+  const list = inCategory(txns, cat);
+  return { list:list, count:list.length, qty:list.reduce((s,t)=>s+t.qty,0), amt:list.reduce((s,t)=>s+categoryValueFor(t,cat),0) };
 }
 function txnsFor(filterFn){ return DATA.transactions.filter(t=>!isHiddenLowValueRefund(t) && filterFn(t)); }
 function showToast(msg, ms=3200){
@@ -1326,7 +1363,7 @@ function storeSummaryRows(stores, txns){
   return stores.map(s=>{
     const ts = txns.filter(t=>t.storeCode===s.code);
     const c = st => ts.filter(t=>t.status===st).length;
-    const cat = code => { const g = ts.filter(t=>t.category===code); return {count:g.length, qty:g.reduce((s,t)=>s+t.qty,0), amt:g.reduce((s,t)=>s+t.amount,0)}; };
+    const cat = code => catStats(ts, code);
     const refund=cat('refund'), over30=cat('over30'), fullprice=cat('fullprice'), discounted=cat('discounted');
     return `<tr>
       <td>${esc(s.name)}</td>
@@ -1500,10 +1537,7 @@ function renderMultiCriteriaCard(scopeTxns, scopeLabel){
 function renderClusterKpiGrid(txns, scopeLabel){
   const visible = txns.filter(t=>!isHiddenLowValueRefund(t));
   const bucket = b => visible.filter(t=>statusBucket(t.status)===b).length;
-  const catKpi = cat=>{
-    const ts = visible.filter(t=>t.category===cat);
-    return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)};
-  };
+  const catKpi = cat => catStats(visible, cat);
   const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice'), discounted=catKpi('discounted');
   kpiDrilldown = {
     total: visible,
@@ -1511,10 +1545,10 @@ function renderClusterKpiGrid(txns, scopeLabel){
     notstarted: visible.filter(t=>statusBucket(t.status)==='Not Started'),
     openitems: visible.filter(t=>statusBucket(t.status)==='Open Items'),
     noactionneeded: visible.filter(t=>t.status==='No Action Needed'),
-    refund: visible.filter(t=>t.category==='refund'),
-    over30: visible.filter(t=>t.category==='over30'),
-    fullprice: visible.filter(t=>t.category==='fullprice'),
-    discounted: visible.filter(t=>t.category==='discounted'),
+    refund: inCategory(visible,'refund'),
+    over30: inCategory(visible,'over30'),
+    fullprice: inCategory(visible,'fullprice'),
+    discounted: inCategory(visible,'discounted'),
   };
   return `
     <div class="grid kpi-status" style="grid-template-columns:repeat(5,1fr);">
@@ -1689,7 +1723,7 @@ function clusterKpiRow(mgr, stores, txns){
   // are genuinely different numbers (matches the skill's own "Txn Count" vs
   // "Qty" distinction). Showing Qty as the big number was being read as
   // transaction count and looked wrong against the skill's workbook.
-  const c = cat => { const ts = txns.filter(t=>t.category===cat); return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)}; };
+  const c = cat => catStats(txns, cat);
   const refund=c('refund'), over30=c('over30'), fullprice=c('fullprice'), discounted=c('discounted');
   const bucket = b => txns.filter(t=>statusBucket(t.status)===b).length;
   // Completion % is based on the REVIEWABLE workflow only — Signed Off /
@@ -1868,10 +1902,7 @@ function renderHQView(){
   });
 
   const bucket = b => filtered.filter(t=>statusBucket(t.status)===b).length;
-  const catKpi = cat=>{
-    const ts = filtered.filter(t=>t.category===cat);
-    return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)};
-  };
+  const catKpi = cat => catStats(filtered, cat);
   const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice'), discounted=catKpi('discounted');
   kpiDrilldown = {
     total: filtered,
@@ -1879,10 +1910,10 @@ function renderHQView(){
     notstarted: filtered.filter(t=>statusBucket(t.status)==='Not Started'),
     openitems: filtered.filter(t=>statusBucket(t.status)==='Open Items'),
     noactionneeded: filtered.filter(t=>t.status==='No Action Needed'),
-    refund: filtered.filter(t=>t.category==='refund'),
-    over30: filtered.filter(t=>t.category==='over30'),
-    fullprice: filtered.filter(t=>t.category==='fullprice'),
-    discounted: filtered.filter(t=>t.category==='discounted'),
+    refund: inCategory(filtered,'refund'),
+    over30: inCategory(filtered,'over30'),
+    fullprice: inCategory(filtered,'fullprice'),
+    discounted: inCategory(filtered,'discounted'),
   };
 
   const regionsInScope = f.region==='all' ? REGIONS : [f.region];
@@ -1977,10 +2008,7 @@ function renderAdminView(){
 function renderCategorySummaryCard(txns, scopeLabel){
   const visible = txns.filter(t=>!isHiddenLowValueRefund(t));
   const bucket = b => visible.filter(t=>statusBucket(t.status)===b).length;
-  const catKpi = cat=>{
-    const ts = visible.filter(t=>t.category===cat);
-    return {count:ts.length, qty:ts.reduce((s,t)=>s+t.qty,0), amt:ts.reduce((s,t)=>s+t.amount,0)};
-  };
+  const catKpi = cat => catStats(visible, cat);
   const refund=catKpi('refund'), over30=catKpi('over30'), fullprice=catKpi('fullprice'), discounted=catKpi('discounted');
   kpiDrilldown = {
     total: visible,
@@ -1988,10 +2016,10 @@ function renderCategorySummaryCard(txns, scopeLabel){
     notstarted: visible.filter(t=>statusBucket(t.status)==='Not Started'),
     openitems: visible.filter(t=>statusBucket(t.status)==='Open Items'),
     noactionneeded: visible.filter(t=>t.status==='No Action Needed'),
-    refund: visible.filter(t=>t.category==='refund'),
-    over30: visible.filter(t=>t.category==='over30'),
-    fullprice: visible.filter(t=>t.category==='fullprice'),
-    discounted: visible.filter(t=>t.category==='discounted'),
+    refund: inCategory(visible,'refund'),
+    over30: inCategory(visible,'over30'),
+    fullprice: inCategory(visible,'fullprice'),
+    discounted: inCategory(visible,'discounted'),
   };
   return `
     <div class="card">
@@ -2930,13 +2958,13 @@ function handleUpload(){
       // (Code.gs) is the real gate and also checks Signed Off / No Action
       // Needed / archived rows that the browser never loads.
       const existingKeys = new Set(DATA.transactions.concat(adminArchivedFetched)
-        .map(t=>txnKey(t.storeCode, t.transactionNumber)));
+        .map(t=>(t.storeCode+'|'+t.transactionNumber).toUpperCase()));
       let seq = 1;
 
       groups.forEach(g=>{
         const store = resolveStore(g.storeCode);
         if(!store){ unknownStore++; return; }
-        const dupKey = txnKey(store.code, g.key);
+        const dupKey = (store.code+'|'+g.key).toUpperCase();
         if(existingKeys.has(dupKey)){ duplicate++; return; }
 
         const isOnlineCN = /^cn/i.test(g.origTransaction||'');
@@ -3048,6 +3076,9 @@ function handleUpload(){
           barcodes: g.barcodes,
           origTransaction: g.origTransaction,
           matchedCriteria,
+          refundValue: isCreditMemo ? 0 : Math.max(0, remainingBalance),
+          fullPriceValue: g.fullPriceValue,
+          discountedValue: g.discountedValue,
           status: needsReview ? 'Not Submitted' : 'No Action Needed',
           uploadId: uploadBatchId,
         }));
@@ -3084,7 +3115,7 @@ function handleUpload(){
 
       document.getElementById('uploadSummaryBox').innerHTML = `
         <div class="note-box" style="margin-top:12px;">
-          <b>Upload Summary</b> — Distinct transactions: ${groups.size} · Imported: ${imported - serverSkipped} · Duplicate (already in system): ${duplicate + serverSkipped} · Unknown store code: ${unknownStore} · Not flagged / clean exchange (skipped, not a compliance item): ${notFlagged}${missingReturnDate?` · <b>Unparseable Return Date (skipped — fix and re-upload): ${missingReturnDate}</b>`:''}${skippedNoKey?` · Rows with no Transaction key: ${skippedNoKey}`:''} · Server script: ${upRes.version ? esc(String(upRes.version)) : '<b>OLD VERSION (no duplicate gate) — redeploy</b>'}
+          <b>Upload Summary</b> — Distinct transactions: ${groups.size} · Imported: ${imported - serverSkipped} · Duplicate (already in system): ${duplicate + serverSkipped} · Unknown store code: ${unknownStore} · Not flagged / clean exchange (skipped, not a compliance item): ${notFlagged}${missingReturnDate?` · <b>Unparseable Return Date (skipped — fix and re-upload): ${missingReturnDate}</b>`:''}${skippedNoKey?` · Rows with no Transaction key: ${skippedNoKey}`:''}
         </div>`;
       showToast(`Import complete: ${imported - serverSkipped} new transaction(s) added${serverSkipped?`, ${serverSkipped} already on the sheet and skipped`:''}.`);
       render();
