@@ -223,7 +223,7 @@ const STORES = [
   {code:'S2004EMP', name:'Emporium Mall, Lahore', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
   {code:'S4004GRT', name:'Kutchery road, Gujrat', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
   {code:'S2003DHA', name:'Y-Block DHA, Lahore', cluster:'C1', clusterManager:'Ali Hyder', region:'Central', closed:false},
-  {code:'S4002FSD', name:'Jaranwala Road, Faisalabad', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
+  {code:'S4002FSD', name:'Jaranwala Road, Faisalabad (old - relocated)', cluster:'Closed', clusterManager:'Unassigned', region:'Central', closed:true},
   {code:'S4015SKP', name:'Sargodha Road, Sheikhpura', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
   {code:'S4012SKT', name:'V-Mall, Sialkot', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
   {code:'S2006MOD', name:'Mall of Defence, Lahore', cluster:'Closed', clusterManager:'Unassigned', region:'Central', closed:true},
@@ -240,7 +240,7 @@ const STORES = [
   {code:'S3008PEW', name:'University Road, Peshawar', cluster:'N2', clusterManager:'Abdul Rehman', region:'North', closed:false},
   {code:'S3004RCM', name:'S-Town, Rawalpindi', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
   {code:'S3001CEN', name:'Centaurus Mall, Islamabad', cluster:'N2', clusterManager:'Abdul Rehman', region:'North', closed:false},
-  {code:'S4014MIR', name:'Dolphin Chowk, Mirpur', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
+  {code:'S4014MIR', name:'Dolphin Chowk, Mirpur (old - relocated)', cluster:'Closed', clusterManager:'Unassigned', region:'North', closed:true},
   {code:'S5004DMT', name:'DMTR, Karachi', cluster:'S1', clusterManager:'Imran Azeem', region:'South', closed:false},
   {code:'S5009BMH', name:'Autobahn Road, Hyderabad', cluster:'S2', clusterManager:'Syed Bilal Hussain', region:'South', closed:false},
   {code:'S5008LUK', name:'Lucky One Mall, Karachi', cluster:'S2', clusterManager:'Syed Bilal Hussain', region:'South', closed:false},
@@ -272,7 +272,20 @@ const STORES = [
   {code:'S4021MBH2', name:'Jail Road Mandi Bahauddin-02 Store', cluster:'C3', clusterManager:'Usman Saeed', region:'Central', closed:false},
   {code:'S3016GGB', name:'Giga Boutique', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
   {code:'S2013BTL', name:'Bahria Town Lahore', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
+  {code:'S4022MIR2', name:'Dolphin Chowk, Mirpur 2', cluster:'N1', clusterManager:'Muhammad Usman Yousaf', region:'North', closed:false},
+  {code:'S4020FSDM', name:'Jaranwala Road Faisalabad Mega Store', cluster:'C2', clusterManager:'Yasir Siddiqui', region:'Central', closed:false},
 ];
+// Relocated stores: old code -> new code. Every transaction recorded under
+// the old code (live or archived, already on the Sheet) is shown and counted
+// under the new store, so history merges without touching the Sheet.
+// To merge another relocation, add one line: 'OLDCODE':'NEWCODE'.
+const STORE_CODE_ALIASES = { 'S4014MIR':'S4022MIR2', 'S4002FSD':'S4020FSDM' };
+function canonStoreCode(c){ return STORE_CODE_ALIASES[c] || c; }
+function codesWithAliases(codes){
+  const out = new Set(codes);
+  Object.keys(STORE_CODE_ALIASES).forEach(o=>{ if(out.has(STORE_CODE_ALIASES[o])) out.add(o); });
+  return [...out];
+}
 const CLUSTER_MANAGERS = [...new Set(STORES.filter(s=>!s.closed && s.clusterManager!=='Unassigned').map(s=>s.clusterManager))];
 const REGIONS = [...new Set(STORES.map(s=>s.region))];
 // 'fullprice' replaces the former 'creditmemo' compliance bucket at store/cluster
@@ -329,7 +342,7 @@ function baseTxn(t){
   return {
     id: t.id,
     category: t.category,            // 'over30' | 'refund' | 'fullprice' | 'discounted'
-    storeCode: t.storeCode,
+    storeCode: canonStoreCode(t.storeCode),
     transactionNumber: t.transactionNumber,  // the report's distinct Transaction key
     itemCount: t.itemCount,          // number of line items under this transaction
     qty: t.qty,                      // summed Return Qty
@@ -564,7 +577,7 @@ async function fetchArchivedTransactions(dateFrom, dateTo, storeCodes){
   const attempt = async ()=>{
     try{
       const params = new URLSearchParams({ action:'archived', dateFrom: dateFrom||'', dateTo: dateTo||'', _: Date.now() });
-      if(storeCodes && storeCodes.length) params.set('storeCodes', storeCodes.join(','));
+      if(storeCodes && storeCodes.length) params.set('storeCodes', codesWithAliases(storeCodes).join(','));
       const res = await fetch(APPS_SCRIPT_URL + '?' + params.toString(), { cache:'no-store' });
       const json = await res.json();
       if(json && json.ok) return { ok:true, transactions: json.transactions };
@@ -580,7 +593,7 @@ async function fetchArchivedTransactions(dateFrom, dateTo, storeCodes){
     // on the Sheet and still archivable, just never shown here anymore.
     // Filtered centrally, right where the fetch lands, so every screen
     // that calls this function gets the same exclusion automatically.
-    return result.transactions.filter(t=>t.status!=='No Action Needed');
+    return result.transactions.filter(t=>t.status!=='No Action Needed').map(t=>({...t, storeCode: canonStoreCode(t.storeCode)}));
   }
   showToast(result.error, 6000);
   return null;
@@ -3129,6 +3142,8 @@ function handleUpload(){
 function resolveStore(raw){
   const s = String(raw||'').trim().toLowerCase();
   if(!s) return null;
+  const alias = Object.keys(STORE_CODE_ALIASES).find(o=>o.toLowerCase()===s);
+  if(alias) return STORES.find(st=>st.code===STORE_CODE_ALIASES[alias]) || null;
   return STORES.find(st=>st.code.toLowerCase()===s || st.name.toLowerCase()===s) || null;
 }
 
